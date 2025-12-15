@@ -50,9 +50,6 @@ def main():
 
     plt.figure(figsize=(10, 4))
     plt.plot(x, y, "-b")
-    plt.title("Single shot spectrum")
-    plt.xlabel("Wavenumber (1/cm)")
-    plt.ylabel("Intensity")
     plt.grid(True, linestyle="--", alpha=0.6)
     plt.tight_layout()
     plt.show()

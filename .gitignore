@@ -1,2 +1,8 @@
 .venv
 scanning/
+prompt.txt
+scanning_app/__pycache__
+scanning_app/devices/__pycache__/
+scanning_app/utils/__pycache__/
+scanning_app/ui/__pycache__/
+scan_data.pkl

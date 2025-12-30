@@ -1,150 +1,75 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFrame, QScrollArea, QGroupBox,
+    QPushButton, QLabel, QScrollArea, QGroupBox,
     QMessageBox, QSplitter, QDoubleSpinBox, QSpinBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QPen, QBrush
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QPixmap
 import pickle
-import numpy as np
-import time
+ 
 from .camera_view_widget import CameraViewWidget
-from .scan_setup_widget import ScanSetupWidget
 from .heatmap_preview_widget import HeatmapPreviewWidget
 from .spectra_preview_widget import SpectraPreviewWidget
+from devices.scan_worker import ScanWorker
+from .ui_components import DeviceConnectionCard
+ 
 from devices.motors import DummyMotorController
 from devices.spectrometer import Spectrometer
-from config import WINDOW_WIDTH, WINDOW_HEIGHT, SIDEBAR_WIDTH
-
-
-class ScanWorker(QThread):
-    """Background worker for scanning"""
-    progress_updated = pyqtSignal(int)
-    finished = pyqtSignal(list)
-    eta_updated = pyqtSignal(str)
-    
-    def __init__(self, roi_rect, scan_params, motor_controller, spectrometer):
-        super().__init__()
-        self.roi_rect = roi_rect
-        self.scan_params = scan_params
-        self.motor_controller = motor_controller
-        self.spectrometer = spectrometer
-        self._is_stopped = False 
-    
-    def stop(self):
-        """Stop the scan"""
-        self._is_stopped = True
-    
-    def run(self):
-        x_start = self.roi_rect.left()
-        x_end = self.roi_rect.right()
-        y_start = self.roi_rect.top()
-        y_end = self.roi_rect.bottom()
-        
-        step_x = self.scan_params['step_size_x']
-        step_y = self.scan_params['step_size_y']
-        
-        x_points = np.arange(x_start, x_end, step_x)
-        y_points = np.arange(y_start, y_end, step_y)
-        
-        total_points = len(x_points) * len(y_points)
-        results = []
-        
-        start_time = time.time()
-        
-        for i, y in enumerate(y_points):
-            if self._is_stopped:
-                break
-            for j, x in enumerate(x_points):
-                if self._is_stopped:
-                    break
-                
-                self.motor_controller.move_to(x, y)
-                
-                spectrum = self.spectrometer.capture_spectrum()
-                
-                raman_min = self.scan_params['raman_min']
-                raman_max = self.scan_params['raman_max']
-
-                spectrum_len = len(spectrum)
-                min_idx = int((raman_min / 4000) * spectrum_len)
-                max_idx = int((raman_max / 4000) * spectrum_len)
-                min_idx = max(0, min_idx)
-                max_idx = min(spectrum_len, max_idx)
-                
-                integrated_intensity = np.sum(spectrum[min_idx:max_idx])
-                
-                results.append((x, y, integrated_intensity))
-
-                elapsed = time.time() - start_time
-                processed = i * len(x_points) + j + 1
-                remaining = total_points - processed
-                eta_seconds = (elapsed / processed) * remaining if processed > 0 else 0
-                eta_str = f"{eta_seconds//3600:02.0f}:{(eta_seconds%3600)//60:02.0f}:{eta_seconds%60:02.0f}"
-                self.eta_updated.emit(eta_str)
-
-                progress = int((processed / total_points) * 100)
-                self.progress_updated.emit(progress)
-        
-        self.finished.emit(results)
-
-
+ 
+from config import (
+    WINDOW_TITLE, WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT,
+    SIDEBAR_WIDTH, DEFAULT_STEP_SIZE_X, DEFAULT_STEP_SIZE_Y,
+    DEFAULT_ROI_X, DEFAULT_ROI_Y, DEFAULT_ROI_W, DEFAULT_ROI_H,
+    EXPOSURE_MIN, EXPOSURE_MAX, EXPOSURE_DEFAULT,
+    GAIN_MIN, GAIN_MAX, GAIN_DEFAULT,
+    MOTOR_XY_RANGE_MIN, MOTOR_XY_RANGE_MAX,
+    MOTOR_STEP_RANGE_MIN, MOTOR_STEP_RANGE_MAX,
+    ROI_SIZE_MIN, ROI_SIZE_MAX, DEFAULT_SPLITTER_SIZES,
+    PICKLE_FILENAME
+)
+ 
 class MainWindow(QMainWindow):
-    """Main application window with sidebar and split layout"""
-    
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Microscope Control System")
-        self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
-
+        self.setWindowTitle(WINDOW_TITLE)
+        self.setGeometry(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT)
+ 
         self.motor_controller = DummyMotorController()
         self.spectrometer = Spectrometer()
-        self.devices = [self.motor_controller, self.spectrometer]
-
+        
         self.camera_widget = CameraViewWidget()
-        self.scan_setup_widget = ScanSetupWidget()
         self.heatmap_widget = HeatmapPreviewWidget()
         self.spectra_widget = SpectraPreviewWidget()
 
         self.scan_in_progress = False
         self.worker = None
-
-        self.scan_setup_widget.start_scan_requested.connect(self.start_scan)
-
+ 
         self.setup_ui()
-        
-        self.camera_widget.capture_button.clicked.connect(self.setup_roi_interaction)
-        
-        for device in self.devices:
-            device.connect()
-    
+ 
     def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
 
         sidebar = self.create_sidebar()
         main_layout.addWidget(sidebar, 1)
-
+ 
         content_splitter = QSplitter(Qt.Orientation.Vertical)
         
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
         top_splitter.addWidget(self.camera_widget)
         top_splitter.addWidget(self.heatmap_widget)
-        top_splitter.setSizes([WINDOW_WIDTH // 3, WINDOW_WIDTH // 3])
-
+        top_splitter.setSizes(DEFAULT_SPLITTER_SIZES.get("top", [500, 500]))
+ 
         content_splitter.addWidget(top_splitter)
         content_splitter.addWidget(self.spectra_widget)
-        content_splitter.setSizes([WINDOW_HEIGHT // 2, WINDOW_HEIGHT // 2])
-        
+        content_splitter.setSizes(DEFAULT_SPLITTER_SIZES.get("main", [600, 200]))
+ 
         main_layout.addWidget(content_splitter, 3)
-        
         central_widget.setLayout(main_layout)
-    
+ 
     def create_sidebar(self):
-        """Create the sidebar with settings"""
         sidebar = QScrollArea()
         sidebar.setFixedWidth(SIDEBAR_WIDTH)
         sidebar.setWidgetResizable(True)
@@ -152,214 +77,287 @@ class MainWindow(QMainWindow):
         sidebar_content = QWidget()
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        
-        connection_group = QGroupBox("Connections")
-        connection_layout = QVBoxLayout()
-        self.connection_status_label = QLabel("All devices connected")
-        self.connection_status_label.setStyleSheet("color: green;")
-        connection_layout.addWidget(self.connection_status_label)
-        connection_group.setLayout(connection_layout)
+        sidebar_layout.setSpacing(15)
+ 
+        self.cam_conn_card = DeviceConnectionCard(
+            "Camera Connection", 
+            self.camera_widget.camera, 
+            self.camera_widget.camera.list_cameras
+        )
 
-        roi_group = QGroupBox("ROI Selection")
-        roi_layout = QVBoxLayout()
-        self.roi_info_label = QLabel("No ROI selected")
-        self.roi_info_label.setWordWrap(True)
-        roi_layout.addWidget(self.roi_info_label)
-        roi_group.setLayout(roi_layout)
+        self.spec_conn_card = DeviceConnectionCard(
+            "Spectrometer Connection",
+            self.spectrometer,
+            lambda: ["Spectrometer 1 (USB)", "Spectrometer 2 (Mock)"] # Mocking list logic
+        )
 
-        motor_step_group = QGroupBox("Motor Step Settings")
-        motor_step_layout = QVBoxLayout()
+        self.motor_conn_card = DeviceConnectionCard(
+            "Motor Connection",
+            self.motor_controller,
+            lambda: ["COM1", "COM3", "Dummy Controller"] # Mocking list logic
+        )
+ 
+        sidebar_layout.addWidget(self.cam_conn_card)
+        sidebar_layout.addWidget(self.spec_conn_card)
+        sidebar_layout.addWidget(self.motor_conn_card)
 
-        x_step_layout = QHBoxLayout()
-        x_step_layout.addWidget(QLabel("X Step Size (μm):"))
-        self.x_step_spinbox = QDoubleSpinBox()
-        self.x_step_spinbox.setRange(0.1, 100.0)
-        self.x_step_spinbox.setValue(1.0)
-        self.x_step_spinbox.setSingleStep(0.1)
-        x_step_layout.addWidget(self.x_step_spinbox)
-        motor_step_layout.addLayout(x_step_layout)
-    
-        y_step_layout = QHBoxLayout()
-        y_step_layout.addWidget(QLabel("Y Step Size (μm):"))
-        self.y_step_spinbox = QDoubleSpinBox()
-        self.y_step_spinbox.setRange(0.1, 100.0)
-        self.y_step_spinbox.setValue(1.0)
-        self.y_step_spinbox.setSingleStep(0.1)
-        y_step_layout.addWidget(self.y_step_spinbox)
-        motor_step_layout.addLayout(y_step_layout)
+        sidebar_layout.addWidget(self._create_camera_control_group())
+        sidebar_layout.addWidget(self._create_motor_step_group())
+        sidebar_layout.addWidget(self._create_roi_adjust_group())
+        sidebar_layout.addWidget(self._create_raman_settings_group())
+        sidebar_layout.addWidget(self._create_scan_controls_group())
         
-        motor_step_group.setLayout(motor_step_layout)
-        
-        roi_adjust_group = QGroupBox("ROI Adjustment")
-        roi_adjust_layout = QVBoxLayout()
-
-        roi_pos_layout = QHBoxLayout()
-        roi_pos_layout.addWidget(QLabel("X:"))
-        self.roi_x_spinbox = QDoubleSpinBox()
-        self.roi_x_spinbox.setRange(-1000, 1000)
-        self.roi_x_spinbox.setValue(0.0)
-        self.roi_x_spinbox.setSingleStep(1.0)
-        roi_pos_layout.addWidget(self.roi_x_spinbox)
-        
-        roi_pos_layout.addWidget(QLabel("Y:"))
-        self.roi_y_spinbox = QDoubleSpinBox()
-        self.roi_y_spinbox.setRange(-1000, 1000)
-        self.roi_y_spinbox.setValue(0.0)
-        self.roi_y_spinbox.setSingleStep(1.0)
-        roi_pos_layout.addWidget(self.roi_y_spinbox)
-        roi_adjust_layout.addLayout(roi_pos_layout)
-        
-        roi_size_layout = QHBoxLayout()
-        roi_size_layout.addWidget(QLabel("W:"))
-        self.roi_w_spinbox = QDoubleSpinBox()
-        self.roi_w_spinbox.setRange(1, 2000)
-        self.roi_w_spinbox.setValue(100.0)
-        self.roi_w_spinbox.setSingleStep(1.0)
-        roi_size_layout.addWidget(self.roi_w_spinbox)
-        
-        roi_size_layout.addWidget(QLabel("H:"))
-        self.roi_h_spinbox = QDoubleSpinBox()
-        self.roi_h_spinbox.setRange(1, 2000)
-        self.roi_h_spinbox.setValue(100.0)
-        self.roi_h_spinbox.setSingleStep(1.0)
-        roi_size_layout.addWidget(self.roi_h_spinbox)
-        roi_adjust_layout.addLayout(roi_size_layout)
-        
-        self.apply_roi_button = QPushButton("Apply ROI Changes")
-        self.apply_roi_button.clicked.connect(self.apply_roi_changes)
-        roi_adjust_layout.addWidget(self.apply_roi_button)
-        
-        roi_adjust_group.setLayout(roi_adjust_layout)
-
-        scan_group = QGroupBox("Scan Status")
-        scan_layout = QVBoxLayout()
-        self.scan_status_label = QLabel("Ready")
-        scan_layout.addWidget(self.scan_status_label)
-        self.eta_label = QLabel("ETA: --:--:--") 
-        self.eta_label.setVisible(False)
-        scan_layout.addWidget(self.eta_label)
-        scan_group.setLayout(scan_layout)
-        
-        scan_controls_group = QGroupBox("Scan Controls")
-        scan_controls_layout = QVBoxLayout()
-        self.start_scan_button = QPushButton("Start Scan")
-        self.start_scan_button.clicked.connect(self.start_scan)
-        scan_controls_layout.addWidget(self.start_scan_button)
-        self.stop_scan_button = QPushButton("Stop Scan")
-        self.stop_scan_button.clicked.connect(self.stop_scan)
-        self.stop_scan_button.setEnabled(False)
-        scan_controls_layout.addWidget(self.stop_scan_button)
-        scan_controls_group.setLayout(scan_controls_layout)
-        
-        sidebar_layout.addWidget(connection_group)
-        sidebar_layout.addWidget(roi_group)
-        sidebar_layout.addWidget(motor_step_group)
-        sidebar_layout.addWidget(roi_adjust_group)
-        sidebar_layout.addWidget(scan_group)
-        sidebar_layout.addWidget(scan_controls_group)
         sidebar_layout.addStretch()
-        
         sidebar_content.setLayout(sidebar_layout)
         sidebar.setWidget(sidebar_content)
-        
         return sidebar
-    
-    def setup_roi_interaction(self):
-        """Set up ROI drawing interaction - now handled in camera widget"""
-        pass 
-    
-    def apply_roi_changes(self):
-        """Apply manual ROI adjustments"""
-        current_roi = self.camera_widget.get_roi_rect()
-        if current_roi:
-            x = self.roi_x_spinbox.value()
-            y = self.roi_y_spinbox.value()
-            w = self.roi_w_spinbox.value()
-            h = self.roi_h_spinbox.value()
-            
-            self.camera_widget.clear_roi()
-            from PyQt6.QtCore import QRectF
-            new_rect = QRectF(x, y, w, h)
-            self.camera_widget.add_roi(new_rect)
+ 
+    def _create_camera_control_group(self):
+        group = QGroupBox("Camera Settings")
+        layout = QVBoxLayout()
+ 
+        expo_layout = QHBoxLayout()
+        expo_layout.addWidget(QLabel("Exposure (µs):"))
+        self.expo_spinbox = QSpinBox()
+        self.expo_spinbox.setRange(EXPOSURE_MIN, EXPOSURE_MAX)
+        self.expo_spinbox.setValue(EXPOSURE_DEFAULT)
+        expo_layout.addWidget(self.expo_spinbox)
+        layout.addLayout(expo_layout)
 
-            self.roi_info_label.setText(f"Manual ROI: X={x:.2f}, Y={y:.2f}, W={w:.2f}, H={h:.2f}")
+        gain_layout = QHBoxLayout()
+        gain_layout.addWidget(QLabel("Analog Gain:"))
+        self.gain_spinbox = QSpinBox()
+        self.gain_spinbox.setRange(GAIN_MIN, GAIN_MAX)
+        self.gain_spinbox.setValue(GAIN_DEFAULT)
+        gain_layout.addWidget(self.gain_spinbox)
+        layout.addLayout(gain_layout)
+
+        apply_btn = QPushButton("Apply Settings")
+        capture_btn = QPushButton("Capture Image")
+        
+        apply_btn.clicked.connect(self.apply_camera_settings)
+        capture_btn.clicked.connect(self.capture_camera_image)
+ 
+        layout.addWidget(apply_btn)
+        layout.addWidget(capture_btn)
+        group.setLayout(layout)
+        return group
+ 
+    def _create_motor_step_group(self):
+        group = QGroupBox("Scan Step Size")
+        layout = QVBoxLayout()
+ 
+        for label, default_val in [("X Step (μm):", DEFAULT_STEP_SIZE_X), ("Y Step (μm):", DEFAULT_STEP_SIZE_Y)]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            spin = QDoubleSpinBox()
+            spin.setRange(MOTOR_STEP_RANGE_MIN, MOTOR_STEP_RANGE_MAX)
+            spin.setValue(default_val)
+            spin.setSingleStep(0.1)
+            row.addWidget(spin)
+            layout.addLayout(row)
+            
+            if "X" in label: self.x_step_spinbox = spin
+            else: self.y_step_spinbox = spin
+ 
+        group.setLayout(layout)
+        return group
+ 
+    def _create_roi_adjust_group(self):
+        group = QGroupBox("ROI Adjustment")
+        layout = QVBoxLayout()
+
+        pos_layout = QHBoxLayout()
+        pos_layout.addWidget(QLabel("X:"))
+        self.roi_x_spinbox = QDoubleSpinBox()
+        self.roi_x_spinbox.setRange(MOTOR_XY_RANGE_MIN, MOTOR_XY_RANGE_MAX)
+        self.roi_x_spinbox.setValue(DEFAULT_ROI_X)
+        pos_layout.addWidget(self.roi_x_spinbox)
+ 
+        pos_layout.addWidget(QLabel("Y:"))
+        self.roi_y_spinbox = QDoubleSpinBox()
+        self.roi_y_spinbox.setRange(MOTOR_XY_RANGE_MIN, MOTOR_XY_RANGE_MAX)
+        self.roi_y_spinbox.setValue(DEFAULT_ROI_Y)
+        pos_layout.addWidget(self.roi_y_spinbox)
+        layout.addLayout(pos_layout)
+ 
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("W:"))
+        self.roi_w_spinbox = QDoubleSpinBox()
+        self.roi_w_spinbox.setRange(ROI_SIZE_MIN, ROI_SIZE_MAX)
+        self.roi_w_spinbox.setValue(DEFAULT_ROI_W)
+        size_layout.addWidget(self.roi_w_spinbox)
+ 
+        size_layout.addWidget(QLabel("H:"))
+        self.roi_h_spinbox = QDoubleSpinBox()
+        size_layout.addWidget(self.roi_h_spinbox)
+        self.roi_h_spinbox.setRange(ROI_SIZE_MIN, ROI_SIZE_MAX)
+        self.roi_h_spinbox.setValue(DEFAULT_ROI_H)
+        layout.addLayout(size_layout)
+ 
+        self.roi_info_label = QLabel("ROI: Default")
+        layout.addWidget(self.roi_info_label)
+ 
+        apply_roi_button = QPushButton("Update ROI on Image")
+        apply_roi_button.clicked.connect(self.apply_roi_changes)
+        layout.addWidget(apply_roi_button)
+ 
+        group.setLayout(layout)
+        return group
     
-    def start_scan(self):
-        """Start scanning process"""
-        if self.scan_in_progress:
-            print("Scan already in progress!")
+    def _create_raman_settings_group(self):
+        group = QGroupBox("Spectra Settings")
+        layout = QVBoxLayout()
+        
+        l1 = QHBoxLayout()
+        l1.addWidget(QLabel("Min Wavenumber:"))
+        self.raman_min_spinbox = QDoubleSpinBox()
+        self.raman_min_spinbox.setRange(0, 4000)
+        self.raman_min_spinbox.setValue(500)
+        l1.addWidget(self.raman_min_spinbox)
+        
+        l2 = QHBoxLayout()
+        l2.addWidget(QLabel("Max Wavenumber:"))
+        self.raman_max_spinbox = QDoubleSpinBox()
+        self.raman_max_spinbox.setRange(0, 4000)
+        self.raman_max_spinbox.setValue(1500)
+        l2.addWidget(self.raman_max_spinbox)
+        
+        layout.addLayout(l1)
+        layout.addLayout(l2)
+        group.setLayout(layout)
+        return group
+ 
+    def _create_scan_controls_group(self):
+        group = QGroupBox("Scan Execution")
+        layout = QVBoxLayout()
+        
+        self.scan_status_label = QLabel("Status: Ready")
+        self.eta_label = QLabel("")
+        
+        self.start_scan_button = QPushButton("Start Scan")
+        self.start_scan_button.clicked.connect(self.start_scan)
+        self.start_scan_button.setStyleSheet("background-color: #d4f7d4; font-weight: bold;")
+        
+        self.stop_scan_button = QPushButton("STOP")
+        self.stop_scan_button.clicked.connect(self.stop_scan)
+        self.stop_scan_button.setEnabled(False)
+        self.stop_scan_button.setStyleSheet("background-color: #ffcccc;")
+        
+        layout.addWidget(self.scan_status_label)
+        layout.addWidget(self.eta_label)
+        layout.addWidget(self.start_scan_button)
+        layout.addWidget(self.stop_scan_button)
+        
+        group.setLayout(layout)
+        return group
+ 
+    def apply_camera_settings(self):
+        if not self.camera_widget.camera.is_connected:
+            QMessageBox.warning(self, "Error", "Camera not connected.")
             return
         
+        try:
+            self.camera_widget.camera.hcam.put_ExpoTime(self.expo_spinbox.value())
+            self.camera_widget.camera.hcam.put_ExpoAGain(self.gain_spinbox.value())
+            QMessageBox.information(self, "Done", "Settings applied.")
+        except AttributeError:
+             QMessageBox.warning(self, "Error", "Camera driver does not support these direct calls.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+ 
+    def capture_camera_image(self):
+        if not self.camera_widget.camera.is_connected:
+            QMessageBox.warning(self, "Error", "Camera not connected.")
+            return
+        try:
+            image = self.camera_widget.camera.capture_image()
+            pixmap = QPixmap.fromImage(image)
+            self.camera_widget.scene.clear()
+            self.camera_widget.scene.addPixmap(pixmap)
+            self.camera_widget.view.setSceneRect(self.camera_widget.scene.itemsBoundingRect())
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Capture failed: {e}")
+ 
+    def apply_roi_changes(self):
+        x = self.roi_x_spinbox.value()
+        y = self.roi_y_spinbox.value()
+        w = self.roi_w_spinbox.value()
+        h = self.roi_h_spinbox.value()
+        
+        self.camera_widget.clear_roi()
+        new_rect = QRectF(x, y, w, h)
+        self.camera_widget.add_roi(new_rect)
+        self.roi_info_label.setText(f"Manual: X={x}, Y={y}")
+ 
+    def start_scan(self):
+        if not self.camera_widget.camera.has_captured():
+            QMessageBox.warning(self, "Missing Image", "Capture an image first to reference coordinates.")
+            return
+ 
+        if self.scan_in_progress: return
+ 
+        if not (self.camera_widget.camera.is_connected and 
+                self.motor_controller.is_connected and 
+                self.spectrometer.is_connected):
+            QMessageBox.warning(self, "Connection Error", "Please ensure Camera, Motors, and Spectrometer are all connected (Green light).")
+            return
+ 
         roi_rect = self.camera_widget.get_roi_rect()
         if not roi_rect:
-            print("No ROI selected!")
+            QMessageBox.warning(self, "Missing ROI", "Please select a Region of Interest (ROI) on the camera image.")
             return
-        
-        all_connected = all(device.is_connected for device in self.devices)
-        if not all_connected:
-            print("Not all devices connected!")
-            return
-        
+ 
         scan_params = {
-            'step_size_x': self.x_step_spinbox.value(),
-            'step_size_y': self.y_step_spinbox.value(),
-            'raman_min': self.scan_setup_widget.raman_min_spinbox.value(),
-            'raman_max': self.scan_setup_widget.raman_max_spinbox.value()
+            "step_size_x": self.x_step_spinbox.value(),
+            "step_size_y": self.y_step_spinbox.value(),
+            "raman_min": self.raman_min_spinbox.value(),
+            "raman_max": self.raman_max_spinbox.value(),
         }
         
-        self.start_scan_button.setEnabled(False)
-        self.stop_scan_button.setEnabled(True)
-        self.scan_in_progress = True
-
-        self.eta_label.setVisible(True)
-
-        self.scan_status_label.setText("Scanning...")
-        self.eta_label.setText("ETA: Calculating...")
-
-        self.worker = ScanWorker(
-            roi_rect, scan_params, self.motor_controller, self.spectrometer
-        )
+        self.set_ui_scanning_state(True)
+        
+        self.worker = ScanWorker(roi_rect, scan_params, self.motor_controller, self.spectrometer)
         self.worker.progress_updated.connect(self.update_scan_progress)
-        self.worker.eta_updated.connect(self.update_eta)
+        self.worker.eta_updated.connect(lambda t: self.eta_label.setText(f"ETA: {t}"))
+        self.worker.error_occurred.connect(self.on_scan_error)
         self.worker.finished.connect(self.on_scan_finished)
         self.worker.start()
-    
+ 
     def stop_scan(self):
-        """Stop the current scan"""
-        if self.scan_in_progress and self.worker:
+        if self.worker and self.scan_in_progress:
             self.worker.stop()
-            self.worker.wait()
-            self.scan_in_progress = False
-
-            self.start_scan_button.setEnabled(True)
-            self.stop_scan_button.setEnabled(False)
-            self.scan_status_label.setText("Scan stopped")
-            self.eta_label.setVisible(False)
-    
+            self.scan_status_label.setText("Status: Stopping...")
+ 
+    def set_ui_scanning_state(self, is_scanning):
+        self.scan_in_progress = is_scanning
+        self.start_scan_button.setEnabled(not is_scanning)
+        self.stop_scan_button.setEnabled(is_scanning)
+        
+        self.motor_conn_card.setEnabled(not is_scanning)
+        self.spec_conn_card.setEnabled(not is_scanning)
+        
+        if is_scanning:
+            self.scan_status_label.setText("Status: Scanning...")
+        else:
+            self.scan_status_label.setText("Status: Idle")
+ 
     def update_scan_progress(self, progress):
-        """Update scan progress"""
         self.scan_status_label.setText(f"Scanning... {progress}%")
-    
-    def update_eta(self, eta_str):
-        """Update estimated time of arrival"""
-        self.eta_label.setText(f"ETA: {eta_str}")
-    
+ 
+    def on_scan_error(self, err_msg):
+        self.set_ui_scanning_state(False)
+        QMessageBox.critical(self, "Scan Error", err_msg)
+ 
     def on_scan_finished(self, scan_data):
-        """Handle scan completion"""
-        if self.worker:
-            self.worker = None
+        self.set_ui_scanning_state(False)
+        self.scan_status_label.setText("Status: Completed")
         
-        self.start_scan_button.setEnabled(True)
-        self.stop_scan_button.setEnabled(False)
-        self.scan_in_progress = False
-        
-        self.scan_status_label.setText("Scan completed!")
-        
-        self.eta_label.setVisible(False)
-
         self.heatmap_widget.update_heatmap(scan_data)
         
-        with open('scan_data.pkl', 'wb') as f:
-            pickle.dump(scan_data, f)
-        
-        print(f"Scan completed! Data saved to scan_data.pkl ({len(scan_data)} points)")
+        try:
+            with open(PICKLE_FILENAME, "wb") as f:
+                pickle.dump(scan_data, f)
+            QMessageBox.information(self, "Success", f"Scan saved to {PICKLE_FILENAME}")
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Could not save data: {e}")

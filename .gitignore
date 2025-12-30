@@ -7,4 +7,5 @@ scanning_app/utils/__pycache__/
 scanning_app/ui/__pycache__/
 scan_data.pkl
 test_files/__pycache__
+scanning_app/devices/toupcam.dll
 test_files/toupcam.dll

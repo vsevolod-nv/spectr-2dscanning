@@ -1,12 +1,8 @@
-.venv
+.venv/
 scanning/
-scanning_app/__pycache__
-scanning_app/devices/__pycache__/
-scanning_app/utils/__pycache__/
-scanning_app/ui/__pycache__/
 scan_data.pkl
-test_files/__pycache__
 test_files/toupcam.dll
 artifacts/
 scanning_app/devices/camera/cow.jpg
 scanning_app/devices/camera/toupcam.dll
+__pycache__/

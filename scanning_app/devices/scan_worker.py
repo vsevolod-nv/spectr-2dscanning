@@ -1,18 +1,24 @@
 import time
-from typing import List, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 from loguru import logger
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from config import SPECTRUM_MAX_WAVENUMBER
+
+@dataclass
+class ScanPoint:
+    x: float
+    y: float
+    raman_shifts: np.ndarray
+    intensities: np.ndarray
 
 
 class ScanWorker(QThread):
     progress_updated = pyqtSignal(int)
-    finished = pyqtSignal(list)
     eta_updated = pyqtSignal(str)
-    data_point_acquired = pyqtSignal(tuple)
+    point_acquired = pyqtSignal(object)
+    finished = pyqtSignal(list)
 
     def __init__(self, roi_rect, scan_params, motor_controller, spectrometer):
         super().__init__()
@@ -39,16 +45,15 @@ class ScanWorker(QThread):
 
         total_points = len(x_points) * len(y_points)
         if total_points == 0:
-            logger.warning("No scan points generated—empty ROI or invalid step size")
+            logger.warning("No scan points generated")
             self.finished.emit([])
             return
 
-        results: List[Tuple[float, float, float]] = []
+        results: list[ScanPoint] = []
         start_time = time.time()
 
         for i, y in enumerate(y_points):
             if self._is_stopped:
-                logger.info("Scan stopped by user")
                 break
 
             for j, x in enumerate(x_points):
@@ -56,41 +61,29 @@ class ScanWorker(QThread):
                     break
 
                 self.motor_controller.move_to(x, y)
-                spectrum = self.spectrometer.capture_spectrum()
 
-                raman_min = self.scan_params["raman_min"]
-                raman_max = self.scan_params["raman_max"]
-                spectrum_len = len(spectrum)
+                raman_shifts, intensities = self.spectrometer.acquire_spectrum()
 
-                if SPECTRUM_MAX_WAVENUMBER > 0:
-                    min_idx = int((raman_min / SPECTRUM_MAX_WAVENUMBER) * spectrum_len)
-                    max_idx = int((raman_max / SPECTRUM_MAX_WAVENUMBER) * spectrum_len)
-                else:
-                    min_idx, max_idx = 0, spectrum_len
-
-                min_idx = max(0, min_idx)
-                max_idx = min(spectrum_len, max_idx)
-
-                intensity = (
-                    np.sum(spectrum[min_idx:max_idx]) if min_idx < max_idx else 0.0
+                point = ScanPoint(
+                    x=x,
+                    y=y,
+                    raman_shifts=raman_shifts,
+                    intensities=intensities,
                 )
 
-                point_data = (x, y, intensity)
-                results.append(point_data)
+                self.point_acquired.emit(point)
+                results.append(point)
 
                 processed = i * len(x_points) + j + 1
                 elapsed = time.time() - start_time
-                if processed > 0:
-                    remaining = total_points - processed
-                    eta_seconds = (elapsed / processed) * remaining
-                    m, s = divmod(eta_seconds, 60)
-                    h, m = divmod(m, 60)
-                    eta_str = f"{int(h):02}:{int(m):02}:{int(s):02}"
-                else:
-                    eta_str = "--:--:--"
+                remaining = total_points - processed
+                eta = (elapsed / processed) * remaining if processed else 0
 
-                self.eta_updated.emit(eta_str)
-                self.progress_updated.emit(int((processed / total_points) * 100))
+                hours, remainder = divmod(int(eta), 3600)
+                minutes, seconds = divmod(remainder, 60)
 
-        logger.info(f"Scan completed. Collected {len(results)} data points")
+                self.eta_updated.emit(f"{hours:02}:{minutes:02}:{seconds:02}")
+                self.progress_updated.emit(int(processed / total_points * 100))
+
+        logger.info("Scan completed. Collected %d points", len(results))
         self.finished.emit(results)

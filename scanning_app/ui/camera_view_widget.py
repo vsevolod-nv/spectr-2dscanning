@@ -1,9 +1,12 @@
+from typing import Optional
+
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtWidgets, QtCore, QtGui
-from PyQt6.QtCore import pyqtSignal, QRectF
-from devices.camera import DummyCamera as Camera
 from loguru import logger
+from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtCore import QRectF, pyqtSignal
+
+from devices.camera.base_camera import BaseCamera
 
 MIN_ROI_SIZE = 5
 DEFAULT_IMAGE_WIDTH = 1280
@@ -15,8 +18,8 @@ class CameraViewWidget(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.camera = Camera()
 
+        self.camera: Optional[BaseCamera] = None
         self.roi = None
         self.drag_start = None
         self._temp_roi = None
@@ -37,6 +40,7 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.plot.setAspectLocked(True)
         self.plot.showAxes(True, showValues=True)
         self.plot.showGrid(x=True, y=True, alpha=0.3)
+        self.plot.setBackground("w")
         self.plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
 
         self.image_item = pg.ImageItem(axisOrder="row-major")
@@ -50,7 +54,10 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.plot.addItem(self.text_item)
 
         self.border_item = QtWidgets.QGraphicsRectItem(
-            0, 0, self.default_width, self.default_height
+            0,
+            0,
+            self.default_width,
+            self.default_height,
         )
         self.border_item.setPen(
             pg.mkPen("w", width=1, style=QtCore.Qt.PenStyle.DashLine)
@@ -84,7 +91,8 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.text_item.show()
         self.border_item.show()
         self.plot.getViewBox().setRange(
-            QtCore.QRectF(0, 0, self.default_width, self.default_height), padding=0
+            QRectF(0, 0, self.default_width, self.default_height),
+            padding=0,
         )
         self.plot.getViewBox().invertY(True)
 
@@ -99,11 +107,10 @@ class CameraViewWidget(QtWidgets.QWidget):
                 pos = event.scenePos()
                 view_box = self.plot.getViewBox()
                 if view_box.sceneBoundingRect().contains(pos):
-                    mouse_point = view_box.mapSceneToView(pos)
-                    self.drag_start = mouse_point
+                    self.drag_start = view_box.mapSceneToView(pos)
                     return True
 
-        elif event.type() == QtCore.QEvent.Type.GraphicsSceneMouseRelease:
+        if event.type() == QtCore.QEvent.Type.GraphicsSceneMouseRelease:
             if event.button() == QtCore.Qt.MouseButton.LeftButton and self.drag_start:
                 pos = event.scenePos()
                 view_box = self.plot.getViewBox()
@@ -114,6 +121,7 @@ class CameraViewWidget(QtWidgets.QWidget):
                 if self._temp_roi:
                     self.plot.removeItem(self._temp_roi)
                     self._temp_roi = None
+
                 return True
 
         return super().eventFilter(source, event)
@@ -125,7 +133,8 @@ class CameraViewWidget(QtWidgets.QWidget):
             return
 
         mouse_point = view_box.mapSceneToView(pos)
-        x, y = mouse_point.x(), mouse_point.y()
+        x = mouse_point.x()
+        y = mouse_point.y()
 
         self.v_line.setPos(x)
         self.h_line.setPos(y)
@@ -135,8 +144,10 @@ class CameraViewWidget(QtWidgets.QWidget):
             self._update_temp_roi(mouse_point)
 
     def _update_temp_roi(self, current_point):
-        x0, y0 = self.drag_start.x(), self.drag_start.y()
-        x1, y1 = current_point.x(), current_point.y()
+        x0 = self.drag_start.x()
+        y0 = self.drag_start.y()
+        x1 = current_point.x()
+        y1 = current_point.y()
 
         x = min(x0, x1)
         y = min(y0, y1)
@@ -150,7 +161,11 @@ class CameraViewWidget(QtWidgets.QWidget):
             self._temp_roi = pg.RectROI(
                 [x, y],
                 [w, h],
-                pen=pg.mkPen("y", width=1, style=QtCore.Qt.PenStyle.DashLine),
+                pen=pg.mkPen(
+                    "y",
+                    width=1,
+                    style=QtCore.Qt.PenStyle.DashLine,
+                ),
                 movable=False,
                 resizable=False,
             )
@@ -160,8 +175,10 @@ class CameraViewWidget(QtWidgets.QWidget):
             self._temp_roi.setSize([w, h])
 
     def _finalize_roi(self, current_point):
-        x0, y0 = self.drag_start.x(), self.drag_start.y()
-        x1, y1 = current_point.x(), current_point.y()
+        x0 = self.drag_start.x()
+        y0 = self.drag_start.y()
+        x1 = current_point.x()
+        y1 = current_point.y()
 
         x = min(x0, x1)
         y = min(y0, y1)
@@ -169,7 +186,7 @@ class CameraViewWidget(QtWidgets.QWidget):
         h = abs(y1 - y0)
 
         if w > MIN_ROI_SIZE and h > MIN_ROI_SIZE:
-            self.add_roi(QtCore.QRectF(x, y, w, h))
+            self.add_roi(QRectF(x, y, w, h))
 
     def set_image(self, qimage: QtGui.QImage):
         if qimage is None or qimage.isNull():
@@ -184,18 +201,19 @@ class CameraViewWidget(QtWidgets.QWidget):
 
         ptr = qimage.constBits()
         ptr.setsize(height * width * 4)
-        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4))
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape(height, width, 4)
         rgb_arr = arr[..., :3]
 
         self.image_item.setImage(rgb_arr, autoLevels=False)
-        logger.debug(f"Image set in image_item, size {rgb_arr.shape}")
-        self._hide_no_image()
+        logger.debug("Image set in image_item, size %s", rgb_arr.shape)
 
-        self.plot.getViewBox().setRange(QtCore.QRectF(0, 0, width, height), padding=0)
+        self._hide_no_image()
+        self.plot.getViewBox().setRange(QRectF(0, 0, width, height), padding=0)
         self.plot.getViewBox().invertY(True)
 
     def add_roi(self, rect: QRectF):
         self.clear_roi()
+
         self.roi = pg.RectROI(
             [rect.x(), rect.y()],
             [rect.width(), rect.height()],
@@ -206,6 +224,7 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.roi.addScaleHandle([1, 1], [0, 0])
         self.roi.addScaleHandle([0, 0], [1, 1])
         self.roi.sigRegionChanged.connect(self._on_roi_changed)
+
         self.plot.addItem(self.roi)
         self.roi_changed.emit(rect)
 

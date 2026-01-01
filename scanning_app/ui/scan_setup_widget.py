@@ -1,6 +1,10 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QDoubleSpinBox,
-    QPushButton, QGroupBox
+    QWidget,
+    QVBoxLayout,
+    QFormLayout,
+    QDoubleSpinBox,
+    QPushButton,
+    QGroupBox,
 )
 from PyQt6.QtCore import pyqtSignal
 from config import (
@@ -13,6 +17,7 @@ from config import (
     RAMAN_MIN_LIMIT,
     RAMAN_MAX_LIMIT,
 )
+from loguru import logger
 
 
 class ScanSetupWidget(QWidget):
@@ -67,7 +72,7 @@ class ScanSetupWidget(QWidget):
 
         self.start_scan_button = QPushButton("Start Scan")
         self.start_scan_button.setFixedHeight(BUTTON_HEIGHT)
-        self.start_scan_button.clicked.connect(self.start_scan_requested.emit)
+        self.start_scan_button.clicked.connect(self._on_start_scan)
 
         layout.addWidget(grid_group)
         layout.addWidget(raman_group)
@@ -75,6 +80,10 @@ class ScanSetupWidget(QWidget):
         layout.addStretch()
 
         self.setLayout(layout)
+
+    def _on_start_scan(self):
+        logger.info("Scan start requested")
+        self.start_scan_requested.emit()
 
     def get_scan_parameters(self):
         return {

@@ -9,3 +9,4 @@ scan_data.pkl
 test_files/__pycache__
 scanning_app/devices/toupcam.dll
 test_files/toupcam.dll
+scanning_app/devices/cow.jpg

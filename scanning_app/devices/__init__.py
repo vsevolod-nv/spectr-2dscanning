@@ -1,3 +1,3 @@
-from .camera import ToupCamCamera as Camera
+from .camera import DummyCamera
 from .spectrometer import Spectrometer
-from .motors import AbstractMotorController, DummyMotorController
+from .motors import DummyMotorController

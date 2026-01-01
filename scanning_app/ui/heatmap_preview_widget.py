@@ -15,6 +15,7 @@ from config import (
     SAMPLE_TITLE,
     LIVE_TITLE,
 )
+from loguru import logger
 
 
 class HeatmapPreviewWidget(QWidget):
@@ -48,7 +49,12 @@ class HeatmapPreviewWidget(QWidget):
             Z,
             cmap=HEATMAP_CMAP,
             origin=HEATMAP_ORIGIN,
-            extent=[SAMPLE_X_RANGE[0], SAMPLE_X_RANGE[1], SAMPLE_Y_RANGE[0], SAMPLE_Y_RANGE[1]],
+            extent=[
+                SAMPLE_X_RANGE[0],
+                SAMPLE_X_RANGE[1],
+                SAMPLE_Y_RANGE[0],
+                SAMPLE_Y_RANGE[1],
+            ],
             aspect=HEATMAP_ASPECT,
         )
         self.ax.set_xlabel(X_LABEL_TEXT)
@@ -63,6 +69,7 @@ class HeatmapPreviewWidget(QWidget):
             self.colorbar = None
 
         if not scan_data:
+            logger.debug("No scan data provided; skipping heatmap update.")
             return
 
         x_coords = [point[0] for point in scan_data]
@@ -70,6 +77,9 @@ class HeatmapPreviewWidget(QWidget):
         intensities = [point[2] for point in scan_data]
 
         if not x_coords or not y_coords:
+            logger.warning(
+                "Empty coordinate lists in scan data; cannot update heatmap."
+            )
             return
 
         unique_x = sorted(set(x_coords))
@@ -79,9 +89,14 @@ class HeatmapPreviewWidget(QWidget):
         z_grid = np.full_like(x_grid, np.nan, dtype=float)
 
         for x, y, intensity in scan_data:
-            x_idx = unique_x.index(x)
-            y_idx = unique_y.index(y)
-            z_grid[y_idx, x_idx] = intensity
+            try:
+                x_idx = unique_x.index(x)
+                y_idx = unique_y.index(y)
+                z_grid[y_idx, x_idx] = intensity
+            except ValueError:
+                logger.error(
+                    f"Coordinate ({x}, {y}) not found in unique axes — data inconsistency."
+                )
 
         self.ax.clear()
         im = self.ax.imshow(

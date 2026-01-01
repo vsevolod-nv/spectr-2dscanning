@@ -1,84 +1,73 @@
-from .base_device import BaseDevice
+import os
 from PyQt6.QtGui import QImage
-import numpy as np
-from . import toupcam
-import ctypes
-import time
-from config import (
-    TOUPCAM_AUTO_EXPO_ENABLED,
-    TOUPCAM_DEFAULT_EXPO_TIME_US,
-    TOUPCAM_DEFAULT_EXPO_AGAIN,
-    TOUPCAM_SNAP_WAIT_SECONDS,
-    TOUPCAM_PIXEL_FORMAT_BITS,
-    TOUPCAM_IMAGE_FORMAT,
-)
+from PyQt6.QtCore import QObject, pyqtSignal
+from loguru import logger
+
+HARDCODED_IMAGE_PATH = r"C:\projects\spectr-2dscanning\scanning_app\devices\cow.jpg"
 
 
-class ToupCamCamera(BaseDevice):
+class CameraError(Exception):
+    pass
+
+
+class DummyCamera(QObject):
+    connected = pyqtSignal(bool)
+
     def __init__(self):
         super().__init__()
-        self.hcam = None
-        self._w = 0
-        self._h = 0
-        self._has_captured = False
+        self.is_connected = False
+        self.name = "Simulated Dummy Camera"
+        self.hcam = self._MockHandle()
+
+    class _MockHandle:
+        def put_ExpoTime(self, val):
+            logger.debug(f"[Dummy Camera] Exposure time set to: {val}")
+
+        def put_ExpoAGain(self, val):
+            logger.debug(f"[Dummy Camera] Gain set to: {val}")
 
     def list_cameras(self):
-        try:
-            arr = toupcam.Toupcam.EnumV2()
-            return [info.displayname for info in arr]
-        except Exception:
-            return []
-
-    def connect_by_name(self, name: str):
-        if self.hcam:
-            self.disconnect()
-        try:
-            arr = toupcam.Toupcam.EnumV2()
-            for info in arr:
-                if info.displayname == name:
-                    self.hcam = toupcam.Toupcam.Open(info.id)
-                    if self.hcam:
-                        self._w, self._h = self.hcam.get_Size()
-                        self.hcam.put_AutoExpoEnable(int(TOUPCAM_AUTO_EXPO_ENABLED))
-                        self.hcam.put_ExpoTime(TOUPCAM_DEFAULT_EXPO_TIME_US)
-                        self.hcam.put_ExpoAGain(TOUPCAM_DEFAULT_EXPO_AGAIN)
-                        self._is_connected = True
-                        self._has_captured = False
-                        return True
-        except Exception:
-            pass
-        return False
+        return ["Simulated Dummy Camera - Default"]
 
     def connect(self):
-        cams = self.list_cameras()
-        if cams:
-            return self.connect_by_name(cams[0])
-        return False
+        self.is_connected = True
+        self.connected.emit(True)
+        logger.info(
+            f"[Dummy Camera] Connected. Looking for image at: {HARDCODED_IMAGE_PATH}"
+        )
+        return True
+
+    def connect_by_name(self, name):
+        return self.connect()
 
     def disconnect(self):
-        if self.hcam:
-            self.hcam.Close()
-            self.hcam = None
-        self._is_connected = False
-        self._has_captured = False
+        self.is_connected = False
+        self.connected.emit(False)
+        logger.info("[Dummy Camera] Disconnected.")
 
-    def capture_image(self):
-        if not self.hcam:
-            raise RuntimeError("Camera not connected")
+    def capture_image(self) -> QImage:
+        if not self.is_connected:
+            raise CameraError("Camera not connected")
 
-        self.hcam.StartPullModeWithCallback(lambda *args: None, None)
-        self.hcam.Snap(0)
-        time.sleep(TOUPCAM_SNAP_WAIT_SECONDS)
+        if not os.path.exists(HARDCODED_IMAGE_PATH):
+            raise CameraError(f"Dummy image file not found: {HARDCODED_IMAGE_PATH}")
 
-        buf = ctypes.create_string_buffer(self._w * self._h * 3)
-        self.hcam.PullStillImageV2(buf, TOUPCAM_PIXEL_FORMAT_BITS, None)
+        image = QImage(HARDCODED_IMAGE_PATH)
+        if image.isNull():
+            raise CameraError(
+                f"Failed to load dummy image from: {HARDCODED_IMAGE_PATH}"
+            )
 
-        arr = np.frombuffer(buf, dtype=np.uint8).reshape((self._h, self._w, 3))
-        arr = np.flipud(arr).copy()
-        self._has_captured = True
+        converted_image = image.convertToFormat(QImage.Format.Format_RGB32)
+        if converted_image.isNull():
+            raise CameraError(
+                f"Failed to convert dummy image to RGB32: {HARDCODED_IMAGE_PATH}"
+            )
 
-        format_enum = getattr(QImage.Format, f"Format_{TOUPCAM_IMAGE_FORMAT}")
-        return QImage(arr.tobytes(), self._w, self._h, format_enum)
+        logger.debug(
+            f"[Dummy Camera] Successfully loaded and converted image: {HARDCODED_IMAGE_PATH}"
+        )
+        return converted_image
 
     def has_captured(self):
-        return self._has_captured
+        return self.is_connected

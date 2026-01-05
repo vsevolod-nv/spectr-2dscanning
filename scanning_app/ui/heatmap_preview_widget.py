@@ -1,9 +1,10 @@
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+import io
 
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from config import HEATMAP_CMAP, PLOT_DPI, RAMAN_MAX_LIMIT, RAMAN_MIN_LIMIT
 
@@ -26,7 +27,6 @@ class HeatmapPreviewWidget(QWidget):
         self._z = None
         self._im = None
         self._grid_points = None
-
         self._scan_data = []
 
         self._init_ui()
@@ -123,7 +123,6 @@ class HeatmapPreviewWidget(QWidget):
         mask = (point.raman_shifts >= self._raman_min) & (
             point.raman_shifts <= self._raman_max
         )
-
         self._z[y_idx, x_idx] = float(np.sum(point.intensities[mask]))
 
         self._im.set_data(self._z)
@@ -149,8 +148,9 @@ class HeatmapPreviewWidget(QWidget):
             x_idx = self._xs.index(point.x)
             y_idx = self._ys.index(point.y)
 
-            mask = (point.raman_shifts >= rmin) & (point.raman_shifts <= rmax)
-
+            mask = (point.raman_shifts >= rmin) & (
+                point.raman_shifts <= rmax
+            )
             self._z[y_idx, x_idx] = float(np.sum(point.intensities[mask]))
 
         self._im.set_data(self._z)
@@ -164,11 +164,11 @@ class HeatmapPreviewWidget(QWidget):
         if event.xdata is None or event.ydata is None:
             return
 
-        x_idx = np.argmin(np.abs(np.array(self._xs) - event.xdata))
-        y_idx = np.argmin(np.abs(np.array(self._ys) - event.ydata))
+        x_idx = int(np.argmin(np.abs(np.array(self._xs) - event.xdata)))
+        y_idx = int(np.argmin(np.abs(np.array(self._ys) - event.ydata)))
 
         point = self._grid_points[y_idx][x_idx]
-        if point:
+        if point is not None:
             self.scan_point_selected.emit(point)
 
     def _compute_extent(self):
@@ -188,3 +188,9 @@ class HeatmapPreviewWidget(QWidget):
             self._ys[0] - dy,
             self._ys[-1] + dy,
         ]
+
+    def export_png(self) -> bytes:
+        buf = io.BytesIO()
+        self.fig.savefig(buf, format="png", dpi=PLOT_DPI, bbox_inches="tight")
+        buf.seek(0)
+        return buf.read()

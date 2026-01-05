@@ -8,6 +8,9 @@ from config import (
     SPECTRUM_NUM_POINTS,
     SPECTRUM_WAVELENGTH_END,
     SPECTRUM_WAVELENGTH_START,
+    SPECTRUM_INTEGRATION_TIME_MS,
+    SPECTRUM_AVERAGES_AMOUNT,
+    SPECTRUM_PUMP_WAVELENGTH
 )
 from .base_spectrometer import BaseSpectrometer
 
@@ -15,7 +18,9 @@ from .base_spectrometer import BaseSpectrometer
 class DummySpectrometer(BaseSpectrometer):
     def __init__(self):
         self._connected = False
-
+        self.integration_time_ms = SPECTRUM_INTEGRATION_TIME_MS 
+        self.averages = SPECTRUM_AVERAGES_AMOUNT
+        self.excitation_wavelength_nm = SPECTRUM_PUMP_WAVELENGTH
         self.wavelengths = np.linspace(
             SPECTRUM_WAVELENGTH_START,
             SPECTRUM_WAVELENGTH_END,

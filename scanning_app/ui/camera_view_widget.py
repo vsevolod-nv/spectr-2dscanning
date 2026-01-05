@@ -4,7 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 from loguru import logger
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import QRectF, pyqtSignal
+from PyQt6.QtCore import QBuffer, QIODevice, QRectF, pyqtSignal
 
 from devices.camera.base_camera import BaseCamera
 
@@ -23,7 +23,6 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.roi = None
         self.drag_start = None
         self._temp_roi = None
-        self.has_image = False
 
         self.default_width = DEFAULT_IMAGE_WIDTH
         self.default_height = DEFAULT_IMAGE_HEIGHT
@@ -86,7 +85,6 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.plot.addItem(self.h_line, ignoreBounds=True)
 
     def _show_no_image(self):
-        self.has_image = False
         self.image_item.clear()
         self.text_item.show()
         self.border_item.show()
@@ -97,7 +95,6 @@ class CameraViewWidget(QtWidgets.QWidget):
         self.plot.getViewBox().invertY(True)
 
     def _hide_no_image(self):
-        self.has_image = True
         self.text_item.hide()
         self.border_item.hide()
 
@@ -196,6 +193,8 @@ class CameraViewWidget(QtWidgets.QWidget):
         if qimage.format() != QtGui.QImage.Format.Format_RGB32:
             qimage = qimage.convertToFormat(QtGui.QImage.Format.Format_RGB32)
 
+        self._display_qimage = qimage.copy()
+
         width = qimage.width()
         height = qimage.height()
 
@@ -232,18 +231,66 @@ class CameraViewWidget(QtWidgets.QWidget):
         if self.roi:
             try:
                 self.plot.removeItem(self.roi)
-            except Exception:
+            except RuntimeError:
                 pass
             self.roi = None
 
     def get_roi_rect(self) -> QRectF | None:
-        if self.roi:
-            return self.roi.parentBounds()
-        return None
+        if self.roi is None:
+            return None
+
+        pos = self.roi.pos()
+        size = self.roi.size()
+
+        x = float(pos.x())
+        y = float(pos.y())
+        w = float(size.x())
+        h = float(size.y())
+
+        img_h = self.image_item.image.shape[0]
+        y_flipped = img_h - (y + h)
+
+        return QRectF(x, y_flipped, w, h)
 
     def _on_roi_changed(self):
         if self.roi:
             self.roi_changed.emit(self.roi.parentBounds())
 
-    def has_captured(self) -> bool:
-        return self.has_image
+    def export_png(self) -> bytes:
+        viewbox = self.plot.getViewBox()
+        plot_item = self.plot.getPlotItem()
+
+        axes_visible = {
+            "left": plot_item.axes["left"]["item"].isVisible(),
+            "bottom": plot_item.axes["bottom"]["item"].isVisible(),
+        }
+
+        bg = self.plot.backgroundBrush()
+
+        plot_item.hideAxis("left")
+        plot_item.hideAxis("bottom")
+        self.plot.setBackground(None)
+
+        viewbox.setContentsMargins(0, 0, 0, 0)
+        plot_item.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.plot.repaint()
+
+        pixmap = self.grab()
+        if pixmap.isNull():
+            raise RuntimeError("Camera view export failed")
+
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        pixmap.save(buffer, "PNG")
+        data = bytes(buffer.data())
+
+        if axes_visible["left"]:
+            plot_item.showAxis("left")
+        if axes_visible["bottom"]:
+            plot_item.showAxis("bottom")
+
+        self.plot.setBackground(bg)
+        self.plot.repaint()
+
+        return data

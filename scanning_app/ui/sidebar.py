@@ -39,6 +39,8 @@ class SidebarWidget(QScrollArea):
     start_scan_requested = pyqtSignal()
     stop_scan_requested = pyqtSignal()
 
+    save_project_requested = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.setFixedWidth(320)
@@ -109,8 +111,16 @@ class SidebarWidget(QScrollArea):
         group = QGroupBox("Scan")
         layout = QVBoxLayout(group)
 
-        self.step_x = self._spin("Step X (µm)", DEFAULT_STEP_SIZE_X, 0.1)
-        self.step_y = self._spin("Step Y (µm)", DEFAULT_STEP_SIZE_Y, 0.1)
+        self.step_x = self._spin(
+            "Step X (µm)",
+            DEFAULT_STEP_SIZE_X,
+            step=0.1,
+        )
+        self.step_y = self._spin(
+            "Step Y (µm)",
+            DEFAULT_STEP_SIZE_Y,
+            step=0.1,
+        )
 
         self.raman_min = self._spin(
             "Raman Min",
@@ -137,8 +147,12 @@ class SidebarWidget(QScrollArea):
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setEnabled(False)
 
+        self.save_btn = QPushButton("Save Project")
+        self.save_btn.setEnabled(False)
+
         self.start_btn.clicked.connect(self.start_scan_requested.emit)
         self.stop_btn.clicked.connect(self.stop_scan_requested.emit)
+        self.save_btn.clicked.connect(self.save_project_requested.emit)
 
         for widget in (
             self.step_x,
@@ -149,6 +163,7 @@ class SidebarWidget(QScrollArea):
             self.eta_lbl,
             self.start_btn,
             self.stop_btn,
+            self.save_btn,
         ):
             layout.addWidget(widget)
 
@@ -171,6 +186,9 @@ class SidebarWidget(QScrollArea):
 
         box.setValue(default)
         return box
+
+    def set_save_enabled(self, enabled: bool):
+        self.save_btn.setEnabled(enabled)
 
     def get_scan_parameters(self):
         return {

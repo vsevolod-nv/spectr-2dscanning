@@ -1,48 +1,11 @@
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
-
-
-class StatusIndicator(QWidget):
-    def __init__(self, label_text: str = "Status") -> None:
-        super().__init__()
-        self.label_text = label_text
-        self._status = False
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-
-        self.indicator_symbol = QFrame()
-        self.indicator_symbol.setFixedSize(12, 12)
-        self.indicator_symbol.setStyleSheet(self._get_indicator_style(False))
-
-        self.indicator_label = QLabel(self.label_text)
-
-        layout.addWidget(self.indicator_symbol)
-        layout.addWidget(self.indicator_label)
-        layout.addStretch()
-
-    def _get_indicator_style(self, is_on: bool) -> str:
-        color = "#4CAF50" if is_on else "#F44336"
-        return f"border-radius: 6px; background-color: {color};"
-
-    def set_status(self, is_on: bool) -> None:
-        self._status = is_on
-        self.indicator_symbol.setStyleSheet(self._get_indicator_style(is_on))
-
-    def get_status(self) -> bool:
-        return self._status
-
 
 class DeviceConnectionWidget(QWidget):
     connect_requested = pyqtSignal(str)

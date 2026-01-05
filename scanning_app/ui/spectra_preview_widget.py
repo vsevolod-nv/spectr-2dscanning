@@ -24,9 +24,7 @@ class SpectraPreviewWidget(QWidget):
         self._style_toolbar()
 
         self.ax = self.fig.add_subplot(111)
-        self._line = None
-
-        self._has_data = False
+        
         self._suppress_span_signal = False
 
         self._raman_min = RAMAN_MIN_LIMIT

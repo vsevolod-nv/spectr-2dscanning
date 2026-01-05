@@ -1,5 +1,14 @@
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QWidget
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QWidget,
+)
 
 from config import (
     DEFAULT_SPLITTER_SIZES,
@@ -19,11 +28,14 @@ from .spectra_preview_widget import SpectraPreviewWidget
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.setWindowTitle(WINDOW_TITLE)
         self.setGeometry(WINDOW_X, WINDOW_Y, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         self.controller = AppController()
         self._heatmap_initialized = False
+        self._scan_finalized = False
+        self._collected_scan_points = []
 
         self._init_ui()
         self._connect_signals()
@@ -58,39 +70,32 @@ class MainWindow(QMainWindow):
         layout.addWidget(main)
 
     def _connect_signals(self):
-        s = self.sidebar
+        sidebar = self.sidebar
 
-        s.connect_camera_requested.connect(self._on_connect_camera)
-        s.disconnect_camera_requested.connect(self._on_disconnect_camera)
+        sidebar.connect_camera_requested.connect(self._on_connect_camera)
+        sidebar.disconnect_camera_requested.connect(self._on_disconnect_camera)
 
-        s.connect_spectrometer_requested.connect(self._on_connect_spectrometer)
-        s.disconnect_spectrometer_requested.connect(self._on_disconnect_spectrometer)
+        sidebar.connect_spectrometer_requested.connect(self._on_connect_spectrometer)
+        sidebar.disconnect_spectrometer_requested.connect(
+            self._on_disconnect_spectrometer
+        )
 
-        s.connect_motors_requested.connect(self._on_connect_motors)
-        s.disconnect_motors_requested.connect(self._on_disconnect_motors)
+        sidebar.connect_motors_requested.connect(self._on_connect_motors)
+        sidebar.disconnect_motors_requested.connect(self._on_disconnect_motors)
 
-        s.capture_image_requested.connect(self._on_capture_image)
-        s.start_scan_requested.connect(self._on_start_scan)
-        s.stop_scan_requested.connect(self._on_stop_scan)
+        sidebar.capture_image_requested.connect(self._on_capture_image)
+        sidebar.start_scan_requested.connect(self._on_start_scan)
+        sidebar.stop_scan_requested.connect(self._on_stop_scan)
 
-        s.raman_min.valueChanged.connect(self._on_raman_range_changed)
-        s.raman_max.valueChanged.connect(self._on_raman_range_changed)
+        sidebar.save_project_requested.connect(self._on_save_project)
+
+        sidebar.raman_min.valueChanged.connect(self._on_raman_range_changed)
+        sidebar.raman_max.valueChanged.connect(self._on_raman_range_changed)
 
         self.spectra_widget.raman_range_selected.connect(
             self._on_raman_range_from_spectrum
         )
         self.heatmap_widget.scan_point_selected.connect(self._on_heatmap_point_selected)
-
-    def _on_raman_range_from_spectrum(self, rmin, rmax):
-        self.sidebar.set_raman_range(rmin, rmax)
-        self.heatmap_widget.set_raman_range(rmin, rmax)
-
-    def _on_raman_range_changed(self):
-        rmin = self.sidebar.raman_min.value()
-        rmax = self.sidebar.raman_max.value()
-
-        self.spectra_widget.set_raman_range(rmin, rmax)
-        self.heatmap_widget.set_raman_range(rmin, rmax)
 
     def _populate_device_lists(self):
         self.sidebar.cam_conn.populate_device_list(self.controller.list_cameras())
@@ -132,12 +137,15 @@ class MainWindow(QMainWindow):
 
         image = self.controller.camera.capture()
         self.camera_widget.set_image(image)
+        self.controller.set_camera_png(self.camera_widget._display_qimage)
 
     def _on_start_scan(self):
-        if (
-            not self.controller.camera
-            or not self.controller.motors
-            or not self.controller.spectrometer
+        if not all(
+            [
+                self.controller.camera,
+                self.controller.motors,
+                self.controller.spectrometer,
+            ]
         ):
             QMessageBox.warning(self, "Scan", "Not all devices connected")
             return
@@ -147,10 +155,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Scan", "ROI not selected")
             return
 
+        self._scan_finalized = False
+        self._collected_scan_points = []
+        self.sidebar.set_save_enabled(False)
         self._heatmap_initialized = False
-        scan_params = self.sidebar.get_scan_parameters()
 
+        scan_params = self.sidebar.get_scan_parameters()
         worker = self.controller.start_scan(roi, scan_params)
+
         self.sidebar.set_scan_running(True)
 
         worker.progress_updated.connect(
@@ -163,6 +175,8 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_scan_point(self, point):
+        self._collected_scan_points.append(point)
+
         if not self._heatmap_initialized:
             self.heatmap_widget.initialize_grid([point])
             self._heatmap_initialized = True
@@ -174,8 +188,38 @@ class MainWindow(QMainWindow):
         self.controller.stop_scan()
         self.sidebar.set_scan_running(False)
 
+        if self._collected_scan_points and not self._scan_finalized:
+            self.controller.finalize_scan(
+                self._collected_scan_points,
+                self.sidebar.get_scan_parameters(),
+            )
+            self._scan_finalized = True
+            self.sidebar.set_save_enabled(True)
+
     def _on_scan_finished(self):
         self.sidebar.set_scan_running(False)
+
+        if self._scan_finalized:
+            return
+
+        if self._collected_scan_points:
+            self.controller.finalize_scan(
+                self._collected_scan_points,
+                self.sidebar.get_scan_parameters(),
+            )
+            self._scan_finalized = True
+            self.sidebar.set_save_enabled(True)
+
+    def _on_raman_range_from_spectrum(self, rmin, rmax):
+        self.sidebar.set_raman_range(rmin, rmax)
+        self.heatmap_widget.set_raman_range(rmin, rmax)
+
+    def _on_raman_range_changed(self):
+        rmin = self.sidebar.raman_min.value()
+        rmax = self.sidebar.raman_max.value()
+
+        self.spectra_widget.set_raman_range(rmin, rmax)
+        self.heatmap_widget.set_raman_range(rmin, rmax)
 
     def _on_heatmap_point_selected(self, point):
         self.spectra_widget.update_from_scan_point(point)
@@ -183,3 +227,57 @@ class MainWindow(QMainWindow):
             self.sidebar.raman_min.value(),
             self.sidebar.raman_max.value(),
         )
+
+    def closeEvent(self, event):
+        ctrl = self.controller
+
+        if not ctrl.current_scan or not ctrl.scan_dirty:
+            event.accept()
+            return
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Unsaved Scan")
+        msg.setText("You have an unsaved Raman scan.")
+        msg.setInformativeText("Do you want to save it before quitting?")
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Save)
+
+        result = msg.exec()
+
+        if result == QMessageBox.StandardButton.Save:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Raman 2D Scan",
+                "",
+                "Raman 2D Scan (*.raman2dscan)",
+            )
+            if not path:
+                event.ignore()
+                return
+
+            ctrl.save_current_scan(Path(path))
+            event.accept()
+
+        elif result == QMessageBox.StandardButton.Discard:
+            event.accept()
+        else:
+            event.ignore()
+
+    def _on_save_project(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Raman 2D Scan",
+            "",
+            "Raman 2D Scan (*.raman2dscan)",
+        )
+        if not path:
+            return
+
+        self.controller.set_camera_png(self.camera_widget.export_png())
+        self.controller.set_heatmap_png(self.heatmap_widget.export_png())
+        self.controller.save_current_scan(Path(path))

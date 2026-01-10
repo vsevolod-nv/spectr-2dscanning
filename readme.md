@@ -49,7 +49,7 @@ Recommended Python version: Python 3.10+
 
 2. Run the Application
 
-python scanning_app/main.py
+```python scanning_app/main.py```
 
 ## Usage Workflow
 

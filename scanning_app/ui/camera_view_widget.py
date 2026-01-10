@@ -201,9 +201,10 @@ class CameraViewWidget(QtWidgets.QWidget):
         ptr = qimage.constBits()
         ptr.setsize(height * width * 4)
         arr = np.frombuffer(ptr, dtype=np.uint8).reshape(height, width, 4)
-        rgb_arr = arr[..., :3]
+        rgb_arr = arr[..., :3].copy()
 
         self.image_item.setImage(rgb_arr, autoLevels=False)
+
         logger.debug("Image set in image_item, size %s", rgb_arr.shape)
 
         self._hide_no_image()
@@ -256,41 +257,51 @@ class CameraViewWidget(QtWidgets.QWidget):
         if self.roi:
             self.roi_changed.emit(self.roi.parentBounds())
 
-    def export_png(self) -> bytes:
-        viewbox = self.plot.getViewBox()
-        plot_item = self.plot.getPlotItem()
+    def export_raw_png(self) -> bytes:
+        if not hasattr(self, "_display_qimage") or self._display_qimage.isNull():
+            return b""
 
-        axes_visible = {
-            "left": plot_item.axes["left"]["item"].isVisible(),
-            "bottom": plot_item.axes["bottom"]["item"].isVisible(),
-        }
+        image = self._display_qimage
 
-        bg = self.plot.backgroundBrush()
+        if self.roi is not None:
+            roi_rect = self.get_roi_rect()
+            if roi_rect is not None:
+                x = int(round(roi_rect.x()))
+                y = int(round(roi_rect.y()))
+                w = int(round(roi_rect.width()))
+                h = int(round(roi_rect.height()))
 
-        plot_item.hideAxis("left")
-        plot_item.hideAxis("bottom")
-        self.plot.setBackground(None)
+                x = max(0, min(x, image.width() - 1))
+                y = max(0, min(y, image.height() - 1))
+                w = min(w, image.width() - x)
+                h = min(h, image.height() - y)
 
-        viewbox.setContentsMargins(0, 0, 0, 0)
-        plot_item.layout.setContentsMargins(0, 0, 0, 0)
-
-        self.plot.repaint()
-
-        pixmap = self.grab()
-        if pixmap.isNull():
-            raise RuntimeError("Camera view export failed")
+                image = image.copy(x, y, w, h)
 
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        pixmap.save(buffer, "PNG")
-        data = bytes(buffer.data())
+        image.save(buffer, "PNG")
+        return bytes(buffer.data())
 
-        if axes_visible["left"]:
-            plot_item.showAxis("left")
-        if axes_visible["bottom"]:
-            plot_item.showAxis("bottom")
+    def export_overview_png(self) -> bytes:
+        if not hasattr(self, "_display_qimage") or self._display_qimage.isNull():
+            return b""
 
-        self.plot.setBackground(bg)
-        self.plot.repaint()
+        image = self._display_qimage.copy()
+        painter = QtGui.QPainter(image)
 
-        return data
+        if self.roi is not None:
+            roi_rect = self.get_roi_rect()
+            if roi_rect is not None:
+                pen = QtGui.QPen(QtGui.QColor("red"))
+                pen.setWidth(3)
+                painter.setPen(pen)
+                painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                painter.drawRect(roi_rect)
+
+        painter.end()
+
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        return bytes(buffer.data())

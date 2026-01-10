@@ -1,10 +1,7 @@
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 from loguru import logger
-from matplotlib.backends.backend_qt5agg import (
-    FigureCanvasQTAgg as FigureCanvas,
-    NavigationToolbar2QT as NavigationToolbar,
-)
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.widgets import SpanSelector
 
@@ -19,14 +16,9 @@ class SpectraPreviewWidget(QWidget):
 
         self.fig = Figure(dpi=PLOT_DPI, facecolor="#fafafa")
         self.canvas = FigureCanvas(self.fig)
-
-        self.toolbar = NavigationToolbar(self.canvas, self)
-        self._style_toolbar()
-
         self.ax = self.fig.add_subplot(111)
-        
-        self._suppress_span_signal = False
 
+        self._suppress_span_signal = False
         self._raman_min = RAMAN_MIN_LIMIT
         self._raman_max = RAMAN_MAX_LIMIT
 
@@ -41,7 +33,7 @@ class SpectraPreviewWidget(QWidget):
             direction="horizontal",
             useblit=True,
             props={"alpha": 0.25, "facecolor": "#1976D2"},
-            interactive=True,
+            interactive=False,
         )
 
         self.canvas.mpl_connect("button_press_event", self._on_click)
@@ -50,26 +42,7 @@ class SpectraPreviewWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
-        layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
-
-    def _style_toolbar(self):
-        self.toolbar.setStyleSheet(
-            """
-            QToolBar {
-                background: #f0f0f0;
-                border: none;
-            }
-            QToolButton {
-                background: transparent;
-                border: none;
-                padding: 4px;
-            }
-            QToolButton:hover {
-                background: #dddddd;
-            }
-            """
-        )
 
     def _init_axes(self):
         self.ax.clear()
@@ -100,6 +73,15 @@ class SpectraPreviewWidget(QWidget):
         )
 
     def update_spectrum(self, raman_shifts, intensities):
+        if raman_shifts is None or intensities is None:
+            return
+
+        if len(raman_shifts) < 2 or len(intensities) < 2:
+            return
+
+        if len(raman_shifts) != len(intensities):
+            return
+
         self._last_spectrum = (raman_shifts, intensities)
 
         self._suppress_span_signal = True
@@ -171,3 +153,7 @@ class SpectraPreviewWidget(QWidget):
 
         if hasattr(self, "_last_spectrum"):
             self.update_spectrum(*self._last_spectrum)
+
+    def set_interactive(self, enabled: bool):
+        if self._span is not None:
+            self._span.set_active(enabled)

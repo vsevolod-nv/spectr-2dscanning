@@ -19,6 +19,7 @@ class Raman2DScanWriter:
         heatmap_grid: np.ndarray,
         heatmap_png: bytes | None = None,
         camera_png: bytes | None = None,
+        camera_raw_png: bytes | None = None,
     ) -> None:
         path = Path(path)
         if path.suffix != ".raman2dscan":
@@ -55,8 +56,11 @@ class Raman2DScanWriter:
                     heatmap_png,
                 )
 
+            if camera_raw_png is not None:
+                zf.writestr("camera_raw.png", camera_raw_png)
+
             if camera_png is not None:
-                zf.writestr("camera_view.png", camera_png)
+                zf.writestr("camera_overview.png", camera_png)
 
     @staticmethod
     def _dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:

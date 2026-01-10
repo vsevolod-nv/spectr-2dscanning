@@ -6,6 +6,7 @@ import pandas as pd
 from controllers.scan_result import ScanResult
 from devices.device_factory import DeviceFactory
 from devices.scan_worker import ScanWorker
+from project_io.load_project import Raman2DScanReader
 from project_io.save_project import Raman2DScanWriter
 
 
@@ -24,6 +25,12 @@ class AppController:
         self.camera_png_bytes = None
 
         self.scan_dirty = False
+
+        self.camera_raw_png = None
+        self.camera_overview_png = None
+
+        self._current_roi = None
+        self._current_scan_params = None
 
     def set_heatmap_png(self, png_bytes: bytes) -> None:
         self.heatmap_png_bytes = png_bytes
@@ -74,6 +81,14 @@ class AppController:
         if self.scan_worker is not None:
             raise RuntimeError("Scan already running")
 
+        self._current_roi = (
+            float(roi_rect.x()),
+            float(roi_rect.y()),
+            float(roi_rect.width()),
+            float(roi_rect.height()),
+        )
+        self._current_scan_params = dict(scan_params)
+
         self.scan_worker = ScanWorker(
             roi_rect=roi_rect,
             scan_params=scan_params,
@@ -88,10 +103,10 @@ class AppController:
             self.scan_worker = None
 
     def finalize_scan(self, scan_points, scan_params):
-        self.current_scan = self._build_scan_result(scan_points, scan_params)
+        self.current_scan = self._build_scan_result(scan_points)
         self.scan_dirty = True
 
-    def _build_scan_result(self, scan_points, scan_params):
+    def _build_scan_result(self, scan_points):
         rows = []
         for point in scan_points:
             for wn, inten in zip(point.raman_shifts, point.intensities):
@@ -108,8 +123,9 @@ class AppController:
 
         scan_meta = {
             "num_points": len(scan_points),
-            "step_size_x": scan_params["step_size_x"],
-            "step_size_y": scan_params["step_size_y"],
+            "step_size_x": self._current_scan_params["step_size_x"],
+            "step_size_y": self._current_scan_params["step_size_y"],
+            "roi": self._current_roi,
         }
 
         spectrometer_meta = {
@@ -119,8 +135,8 @@ class AppController:
         }
 
         heatmap_bounds = (
-            scan_params["raman_min"],
-            scan_params["raman_max"],
+            self._current_scan_params["raman_min"],
+            self._current_scan_params["raman_max"],
         )
 
         heatmap_grid = self._compute_heatmap_from_points(
@@ -135,15 +151,43 @@ class AppController:
             spectra_df=spectra_df,
             heatmap_grid=heatmap_grid,
             heatmap_png=self.heatmap_png_bytes,
-            camera_png=self.camera_png_bytes,
+            camera_overview_png=self.camera_overview_png,
+            camera_raw_png=self.camera_raw_png,
         )
+
+    def _compute_heatmap_from_points(self, scan_points, heatmap_bounds):
+        x0, y0, w, h = self._current_roi
+        step_x = self._current_scan_params["step_size_x"]
+        step_y = self._current_scan_params["step_size_y"]
+
+        xs = np.arange(x0, x0 + w, step_x)
+        ys = np.arange(y0, y0 + h, step_y)
+
+        grid = np.full((len(ys), len(xs)), np.nan)
+
+        x_index = {round(x, 6): i for i, x in enumerate(xs)}
+        y_index = {round(y, 6): i for i, y in enumerate(ys)}
+
+        left, right = heatmap_bounds
+
+        for point in scan_points:
+            xi = x_index.get(round(point.x, 6))
+            yi = y_index.get(round(point.y, 6))
+
+            if xi is None or yi is None:
+                continue
+
+            mask = (point.raman_shifts >= left) & (point.raman_shifts <= right)
+            grid[yi, xi] = float(point.intensities[mask].sum())
+
+        return grid
 
     def save_current_scan(self, path: Path):
         if self.current_scan is None:
             raise RuntimeError("No scan data to save")
 
-        self.current_scan.heatmap_png = self.heatmap_png_bytes
-        self.current_scan.camera_png = self.camera_png_bytes
+        self.current_scan.camera_png = self.camera_overview_png
+        self.current_scan.camera_raw_png = self.camera_raw_png
 
         writer = Raman2DScanWriter()
         writer.write(
@@ -155,25 +199,17 @@ class AppController:
             heatmap_grid=self.current_scan.heatmap_grid,
             heatmap_png=self.current_scan.heatmap_png,
             camera_png=self.current_scan.camera_png,
+            camera_raw_png=self.current_scan.camera_raw_png,
         )
 
         self.scan_dirty = False
 
-    def _compute_heatmap_from_points(self, scan_points, heatmap_bounds):
-        xs = sorted({p.x for p in scan_points})
-        ys = sorted({p.y for p in scan_points})
+    def load_scan(self, path: Path):
+        reader = Raman2DScanReader()
+        self.current_scan = reader.read(path)
+        self.scan_dirty = False
+        return self.current_scan
 
-        x_index = {x: i for i, x in enumerate(xs)}
-        y_index = {y: i for i, y in enumerate(ys)}
-
-        grid = np.zeros((len(ys), len(xs)), dtype=float)
-
-        left, right = heatmap_bounds
-
-        for point in scan_points:
-            mask = (point.raman_shifts >= left) & (point.raman_shifts <= right)
-            grid[y_index[point.y], x_index[point.x]] = float(
-                point.intensities[mask].sum()
-            )
-
-        return grid
+    def update_camera_images(self, *, raw: bytes, overview: bytes):
+        self.camera_raw_png = raw
+        self.camera_overview_png = overview

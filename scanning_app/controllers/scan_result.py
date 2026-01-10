@@ -8,5 +8,6 @@ class ScanResult:
     heatmap_bounds: object
     spectra_df: object
     heatmap_grid: object
-    heatmap_png: object = None
-    camera_png: object = None
+    heatmap_png: bytes
+    camera_overview_png: bytes
+    camera_raw_png: bytes

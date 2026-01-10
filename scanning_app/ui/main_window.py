@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import numpy as np
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -40,6 +42,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._connect_signals()
         self._populate_device_lists()
+        self.sidebar.set_viewer_mode(False)
 
     def _init_ui(self):
         central = QWidget()
@@ -71,6 +74,9 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         sidebar = self.sidebar
+
+        sidebar.open_project_requested.connect(self._on_open_project)
+        sidebar.set_viewer_mode(True)
 
         sidebar.connect_camera_requested.connect(self._on_connect_camera)
         sidebar.disconnect_camera_requested.connect(self._on_disconnect_camera)
@@ -137,15 +143,17 @@ class MainWindow(QMainWindow):
 
         image = self.controller.camera.capture()
         self.camera_widget.set_image(image)
-        self.controller.set_camera_png(self.camera_widget._display_qimage)
+        self._update_camera_images()
 
     def _on_start_scan(self):
+        self.sidebar.set_viewer_mode(False)
+
         if not all(
-            [
+            (
                 self.controller.camera,
                 self.controller.motors,
                 self.controller.spectrometer,
-            ]
+            )
         ):
             QMessageBox.warning(self, "Scan", "Not all devices connected")
             return
@@ -158,10 +166,13 @@ class MainWindow(QMainWindow):
         self._scan_finalized = False
         self._collected_scan_points = []
         self.sidebar.set_save_enabled(False)
-        self._heatmap_initialized = False
 
         scan_params = self.sidebar.get_scan_parameters()
         worker = self.controller.start_scan(roi, scan_params)
+
+        planned_points = worker.generate_planned_points()
+        self.heatmap_widget.initialize_grid(planned_points)
+        self._heatmap_initialized = True
 
         self.sidebar.set_scan_running(True)
 
@@ -177,12 +188,16 @@ class MainWindow(QMainWindow):
     def _on_scan_point(self, point):
         self._collected_scan_points.append(point)
 
-        if not self._heatmap_initialized:
-            self.heatmap_widget.initialize_grid([point])
-            self._heatmap_initialized = True
-
         self.spectra_widget.update_from_scan_point(point)
-        self.heatmap_widget.add_scan_point(point)
+
+        rmin = self.sidebar.raman_min.value()
+        rmax = self.sidebar.raman_max.value()
+
+        self.heatmap_widget.populate_from_points(
+            self._collected_scan_points,
+            rmin,
+            rmax,
+        )
 
     def _on_stop_scan(self):
         self.controller.stop_scan()
@@ -262,7 +277,6 @@ class MainWindow(QMainWindow):
 
             ctrl.save_current_scan(Path(path))
             event.accept()
-
         elif result == QMessageBox.StandardButton.Discard:
             event.accept()
         else:
@@ -278,6 +292,89 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        self.controller.set_camera_png(self.camera_widget.export_png())
-        self.controller.set_heatmap_png(self.heatmap_widget.export_png())
+        self._update_camera_images()
         self.controller.save_current_scan(Path(path))
+
+    def _load_scan_into_ui(self, scan):
+        if scan.camera_overview_png:
+            image = QImage.fromData(scan.camera_overview_png, "PNG")
+
+            if image.isNull():
+                raise RuntimeError("Failed to load camera PNG from project")
+
+            image = image.convertToFormat(QImage.Format.Format_RGB32)
+            image = image.copy()
+
+            self.camera_widget.set_image(image)
+
+        points = []
+        grouped = scan.spectra_df.groupby(["x", "y"])
+
+        for (x, y), group in grouped:
+            if group.empty:
+                continue
+
+            points.append(
+                type(
+                    "P",
+                    (),
+                    {
+                        "x": float(x),
+                        "y": float(y),
+                        "raman_shifts": group["wavenumber_cm1"].values,
+                        "intensities": group["intensity"].values,
+                    },
+                )
+            )
+
+        roi = scan.scan_meta.get("roi")
+        step_x = scan.scan_meta["step_size_x"]
+        step_y = scan.scan_meta["step_size_y"]
+
+        if roi:
+            x0, y0, w, h = roi
+            xs = np.arange(x0, x0 + w, step_x)
+            ys = np.arange(y0, y0 + h, step_y)
+
+            planned_points = [
+                type("P", (), {"x": float(x), "y": float(y)}) for y in ys for x in xs
+            ]
+        else:
+            planned_points = points
+
+        self.heatmap_widget.initialize_grid(planned_points)
+
+        rmin, rmax = scan.heatmap_bounds
+        self.heatmap_widget.populate_from_points(points, rmin, rmax)
+
+        if points:
+            self.spectra_widget.update_from_scan_point(points[0])
+
+        self.spectra_widget.set_interactive(False)
+        self.sidebar.set_raman_range(rmin, rmax)
+        self.spectra_widget.set_raman_range(rmin, rmax)
+        self.heatmap_widget.set_raman_range(rmin, rmax)
+        self.spectra_widget.set_interactive(True)
+        self.sidebar.set_viewer_mode(True)
+
+    def _on_open_project(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Raman 2D Scan",
+            "",
+            "Raman 2D Scan (*.raman2dscan)",
+        )
+        if not path:
+            return
+
+        self.spectra_widget.set_interactive(False)
+        scan = self.controller.load_scan(Path(path))
+        self._load_scan_into_ui(scan)
+        self.spectra_widget.set_interactive(True)
+        self.sidebar.set_viewer_mode(True)
+
+    def _update_camera_images(self):
+        self.controller.update_camera_images(
+            raw=self.camera_widget.export_raw_png(),
+            overview=self.camera_widget.export_overview_png(),
+        )

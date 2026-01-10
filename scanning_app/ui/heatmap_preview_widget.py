@@ -1,10 +1,10 @@
 import io
 
 import numpy as np
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from config import HEATMAP_CMAP, PLOT_DPI, RAMAN_MAX_LIMIT, RAMAN_MIN_LIMIT
 
@@ -19,18 +19,26 @@ class HeatmapPreviewWidget(QWidget):
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111)
 
+        self._fallback_label = QLabel("")
+        self._fallback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._fallback_label.setStyleSheet("color:#777;font-size:12px;")
+        self._fallback_label.hide()
+
         self._raman_min = RAMAN_MIN_LIMIT
         self._raman_max = RAMAN_MAX_LIMIT
 
-        self._xs = None
-        self._ys = None
+        self._xs = []
+        self._ys = []
         self._z = None
         self._im = None
         self._grid_points = None
-        self._scan_data = []
+        self._source_points = []
+
+        self._colorbar = None
+        self._has_2d_heatmap = False
 
         self._init_ui()
-        self._show_empty()
+        self._show_qt_message("No Scan Data")
 
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
@@ -39,149 +47,133 @@ class HeatmapPreviewWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self.canvas)
+        layout.addWidget(self._fallback_label)
 
-    def _show_empty(self):
+    def _show_qt_message(self, text: str):
+        self.canvas.hide()
+        self._fallback_label.setText(text)
+        self._fallback_label.show()
+        self._has_2d_heatmap = False
+
+    def _show_matplotlib(self):
+        self._fallback_label.hide()
+        self.canvas.show()
+
+    def initialize_grid(self, points):
+        self._grid_points = None
+        self._z = None
+        self._im = None
+        self._remove_colorbar()
         self.ax.clear()
-        self.ax.text(
-            0.5,
-            0.5,
-            "No Scan Data",
-            transform=self.ax.transAxes,
-            ha="center",
-            va="center",
-            color="#999",
-            fontsize=11,
-        )
-        self.ax.set_xlabel("X (µm)")
-        self.ax.set_ylabel("Y (µm)")
-        self.canvas.draw_idle()
+        self._has_2d_heatmap = False
 
-    def _on_mouse_move(self, event):
-        if event.inaxes == self.ax:
-            self.canvas.setCursor(Qt.CursorShape.PointingHandCursor)
-        else:
-            self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+        if not points:
+            self._show_qt_message("No Scan Data")
+            return
 
-    def initialize_grid(self, planned_points):
-        self._scan_data = []
-        self._xs = sorted({p.x for p in planned_points})
-        self._ys = sorted({p.y for p in planned_points})
+        self._xs = sorted({p.x for p in points})
+        self._ys = sorted({p.y for p in points})
+
+        if len(self._xs) < 2 or len(self._ys) < 2:
+            self._show_qt_message("Line / sparse scan\n(no 2D heatmap)")
+            return
 
         self._z = np.full((len(self._ys), len(self._xs)), np.nan)
         self._grid_points = [[None for _ in self._xs] for _ in self._ys]
-
-        self.ax.clear()
 
         self._im = self.ax.imshow(
             self._z,
             cmap=HEATMAP_CMAP,
             origin="lower",
-            extent=[
-                min(self._xs),
-                max(self._xs),
-                min(self._ys),
-                max(self._ys),
-            ],
             aspect="auto",
+            extent=self._compute_extent(),
         )
+
+        cmap = self._im.get_cmap().copy()
+        cmap.set_bad(alpha=0.0)
+        self._im.set_cmap(cmap)
 
         self.ax.set_xlabel("X (µm)")
         self.ax.set_ylabel("Y (µm)")
-        self.ax.set_title(
-            f"Integrated Intensity "
-            f"[{self._raman_min:.0f}–{self._raman_max:.0f} cm⁻¹]"
-        )
+        self._update_title()
 
-        self._im.set_data(self._z)
-        self.fig.colorbar(self._im, ax=self.ax)
-        self.canvas.draw_idle()
+        self._colorbar = self.fig.colorbar(self._im, ax=self.ax)
+        self._show_matplotlib()
+        self.canvas.draw()
 
-    def add_scan_point(self, point):
-        if self._z is None:
-            self.initialize_grid([point])
+        self._has_2d_heatmap = True
+
+    def populate_from_points(self, points, raman_min, raman_max):
+        self._source_points = list(points)
+
+        if not self._has_2d_heatmap:
             return
 
-        if point.x not in self._xs:
-            self._xs.append(point.x)
-            self._xs.sort()
-            self._z = np.pad(self._z, ((0, 0), (0, 1)), constant_values=np.nan)
-            for row in self._grid_points:
-                row.append(None)
+        self._raman_min = raman_min
+        self._raman_max = raman_max
 
-        if point.y not in self._ys:
-            self._ys.append(point.y)
-            self._ys.sort()
-            self._z = np.pad(self._z, ((0, 1), (0, 0)), constant_values=np.nan)
-            self._grid_points.append([None for _ in self._xs])
+        self._z[:] = np.nan
+        self._grid_points = [[None for _ in self._xs] for _ in self._ys]
 
-        x_idx = self._xs.index(point.x)
-        y_idx = self._ys.index(point.y)
+        xs = np.asarray(self._xs)
+        ys = np.asarray(self._ys)
 
-        self._scan_data.append(point)
-        self._grid_points[y_idx][x_idx] = point
+        for point in points:
+            x_idx = int(np.argmin(np.abs(xs - point.x)))
+            y_idx = int(np.argmin(np.abs(ys - point.y)))
 
-        mask = (point.raman_shifts >= self._raman_min) & (
-            point.raman_shifts <= self._raman_max
-        )
-        self._z[y_idx, x_idx] = float(np.sum(point.intensities[mask]))
+            mask = (point.raman_shifts >= raman_min) & (point.raman_shifts <= raman_max)
+
+            value = float(point.intensities[mask].sum())
+            self._z[y_idx, x_idx] = value
+            self._grid_points[y_idx][x_idx] = point
 
         self._im.set_data(self._z)
-        self._im.set_extent(self._compute_extent())
 
         finite = self._z[np.isfinite(self._z)]
-        if finite.size > 0:
-            self._im.set_clim(
-                vmin=float(finite.min()),
-                vmax=float(finite.max()),
-            )
+        if finite.size:
+            self._im.set_clim(float(finite.min()), float(finite.max()))
 
-        self.canvas.draw_idle()
+        self._update_title()
+        self.canvas.draw()
 
     def set_raman_range(self, rmin, rmax):
         self._raman_min = rmin
         self._raman_max = rmax
 
-        if self._z is None:
+        if not self._has_2d_heatmap or not self._source_points:
             return
 
-        for point in self._scan_data:
-            x_idx = self._xs.index(point.x)
-            y_idx = self._ys.index(point.y)
-
-            mask = (point.raman_shifts >= rmin) & (
-                point.raman_shifts <= rmax
-            )
-            self._z[y_idx, x_idx] = float(np.sum(point.intensities[mask]))
-
-        self._im.set_data(self._z)
-        self.canvas.draw_idle()
+        self.populate_from_points(self._source_points, rmin, rmax)
 
     def _on_click(self, event):
-        if event.inaxes != self.ax:
+        if not self._has_2d_heatmap:
             return
-        if self._grid_points is None:
-            return
-        if event.xdata is None or event.ydata is None:
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
 
-        x_idx = int(np.argmin(np.abs(np.array(self._xs) - event.xdata)))
-        y_idx = int(np.argmin(np.abs(np.array(self._ys) - event.ydata)))
+        x_idx = int(np.argmin(np.abs(np.asarray(self._xs) - event.xdata)))
+        y_idx = int(np.argmin(np.abs(np.asarray(self._ys) - event.ydata)))
 
         point = self._grid_points[y_idx][x_idx]
-        if point is not None:
+        if point:
             self.scan_point_selected.emit(point)
 
+    def _on_mouse_move(self, event):
+        if self._has_2d_heatmap and event.inaxes == self.ax:
+            self.canvas.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _update_title(self):
+        self.ax.set_title(
+            f"Integrated Intensity "
+            f"[{self._raman_min:.0f}–{self._raman_max:.0f} cm⁻¹]"
+        )
+
     def _compute_extent(self):
-        if len(self._xs) > 1:
-            dx = (self._xs[1] - self._xs[0]) / 2
-        else:
-            dx = 0.5
-
-        if len(self._ys) > 1:
-            dy = (self._ys[1] - self._ys[0]) / 2
-        else:
-            dy = 0.5
-
+        dx = (self._xs[1] - self._xs[0]) / 2
+        dy = (self._ys[1] - self._ys[0]) / 2
         return [
             self._xs[0] - dx,
             self._xs[-1] + dx,
@@ -189,7 +181,17 @@ class HeatmapPreviewWidget(QWidget):
             self._ys[-1] + dy,
         ]
 
+    def _remove_colorbar(self):
+        if self._colorbar:
+            try:
+                self._colorbar.ax.remove()
+            except Exception:
+                pass
+            self._colorbar = None
+
     def export_png(self) -> bytes:
+        if not self._has_2d_heatmap:
+            return b""
         buf = io.BytesIO()
         self.fig.savefig(buf, format="png", dpi=PLOT_DPI, bbox_inches="tight")
         buf.seek(0)

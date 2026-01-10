@@ -45,7 +45,7 @@ This repository currently includes **fully functional dummy devices**, allowing 
 
 Recommended Python version: Python 3.10+
 
-pip install -r requirements.txt
+```pip install -r requirements.txt```
 
 2. Run the Application
 

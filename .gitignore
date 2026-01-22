@@ -7,3 +7,4 @@ scanning_app/devices/camera/cow.jpg
 scanning_app/devices/camera/toupcam.dll
 __pycache__/
 *.raman2dscan
+venv/

@@ -33,9 +33,9 @@ This repository currently includes **fully functional dummy devices**, allowing 
     - Heatmap image;
     - Camera overview & raw images;
 
-- 🧪 **Simulation Mode**
+- **Simulation Mode**
   - Dummy camera, spectrometer, and motor controller;
-  - Ideal for UI testing and development without hardware;
+  - For UI testing and development without hardware;
 
 ---
 
@@ -45,11 +45,11 @@ This repository currently includes **fully functional dummy devices**, allowing 
 
 Recommended Python version: Python 3.10+
 
-pip install -r requirements.txt
+```pip install -r requirements.txt```
 
 2. Run the Application
 
-python scanning_app/main.py
+```python scanning_app/main.py```
 
 ## Usage Workflow
 

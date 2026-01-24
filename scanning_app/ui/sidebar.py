@@ -38,6 +38,7 @@ class SidebarWidget(QScrollArea):
     stop_scan_requested = pyqtSignal()
     save_project_requested = pyqtSignal()
     open_project_requested = pyqtSignal()
+    reset_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -133,6 +134,8 @@ class SidebarWidget(QScrollArea):
         self.eta_lbl = QLabel("--:--:--")
         self.eta_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self.reset_btn = QPushButton("Reset")
+
         self.start_btn = QPushButton("START SCAN")
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setEnabled(False)
@@ -142,6 +145,7 @@ class SidebarWidget(QScrollArea):
 
         self.open_btn = QPushButton("Open Project")
 
+        self.reset_btn.clicked.connect(self.reset_requested.emit)
         self.start_btn.clicked.connect(self.start_scan_requested.emit)
         self.stop_btn.clicked.connect(self.stop_scan_requested.emit)
         self.save_btn.clicked.connect(self.save_project_requested.emit)
@@ -153,6 +157,7 @@ class SidebarWidget(QScrollArea):
             self.raman_min,
             self.raman_max,
             self.status_lbl,
+            self.reset_btn,
             self.eta_lbl,
             self.start_btn,
             self.stop_btn,

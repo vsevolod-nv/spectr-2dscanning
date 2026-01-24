@@ -19,6 +19,12 @@ from config import (
     WINDOW_WIDTH,
     WINDOW_X,
     WINDOW_Y,
+    DEFAULT_STEP_SIZE_X, 
+    DEFAULT_STEP_SIZE_Y, 
+    EXPOSURE_DEFAULT,
+    GAIN_DEFAULT,
+    RAMAN_MIN_LIMIT,
+    RAMAN_MAX_LIMIT
 )
 from controllers.app_controller import AppController
 from .camera_view_widget import CameraViewWidget
@@ -75,6 +81,8 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         sidebar = self.sidebar
 
+        sidebar.reset_requested.connect(self._on_reset)
+
         sidebar.open_project_requested.connect(self._on_open_project)
         sidebar.set_viewer_mode(True)
 
@@ -102,6 +110,35 @@ class MainWindow(QMainWindow):
             self._on_raman_range_from_spectrum
         )
         self.heatmap_widget.scan_point_selected.connect(self._on_heatmap_point_selected)
+    
+    def _on_reset(self):
+        self.controller.stop_scan()
+        self.sidebar.set_scan_running(False)
+        self._on_disconnect_camera()
+        self._on_disconnect_spectrometer()
+        self._on_disconnect_motors()
+        self.camera_widget.clear_roi()
+        self.camera_widget.set_image(None)
+        self._heatmap_initialized = False
+        self._scan_finalized = False
+        self._collected_scan_points = []
+        self.controller.current_scan = None 
+        self.controller.scan_dirty = False 
+        self.controller.heatmap_png_bytes = None 
+        self.controller.camera_raw_png = None
+        self.controller.camera_overview_png = None
+        self.sidebar.set_viewer_mode(False)
+        self.sidebar.set_save_enabled(False)
+        self.sidebar.step_x.setValue(DEFAULT_STEP_SIZE_X)
+        self.sidebar.step_y.setValue(DEFAULT_STEP_SIZE_Y)
+        self.sidebar.set_raman_range(RAMAN_MIN_LIMIT, RAMAN_MAX_LIMIT)
+        self.sidebar.expo_spin.setValue(EXPOSURE_DEFAULT)
+        self.sidebar.gain_spin.setValue(GAIN_DEFAULT)
+        self.heatmap_widget.clear()
+        self.spectra_widget.clear()
+        self.spectra_widget.set_raman_range(RAMAN_MIN_LIMIT, RAMAN_MAX_LIMIT)
+        self._populate_device_lists()
+        self.sidebar.eta_lbl.setText("--:--:--")
 
     def _populate_device_lists(self):
         self.sidebar.cam_conn.populate_device_list(self.controller.list_cameras())

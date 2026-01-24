@@ -157,3 +157,10 @@ class SpectraPreviewWidget(QWidget):
     def set_interactive(self, enabled: bool):
         if self._span is not None:
             self._span.set_active(enabled)
+
+    def clear(self):
+        self._init_axes()
+        self._show_empty_message()
+        if hasattr(self, "_last_spectrum"):
+            delattr(self, "_last_spectrum")
+        self.canvas.draw_idle()

@@ -196,3 +196,16 @@ class HeatmapPreviewWidget(QWidget):
         self.fig.savefig(buf, format="png", dpi=PLOT_DPI, bbox_inches="tight")
         buf.seek(0)
         return buf.read()
+    
+    def clear(self):
+        self.ax.clear()
+        self._remove_colorbar()
+        self._source_points = []
+        self._has_2d_heatmap = False
+        self._show_qt_message("No Scan Data")
+        self.canvas.draw_idle()
+        self._xs = []
+        self._ys = []
+        self._z = None
+        self._grid_points = None
+        self._im = None

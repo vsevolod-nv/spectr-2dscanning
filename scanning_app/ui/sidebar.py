@@ -22,6 +22,7 @@ from config import (
     RAMAN_MAX_LIMIT,
     RAMAN_MIN_LIMIT,
 )
+
 from .ui_components import DeviceConnectionWidget
 
 
@@ -34,8 +35,7 @@ class SidebarWidget(QScrollArea):
     disconnect_motors_requested = pyqtSignal()
 
     capture_image_requested = pyqtSignal()
-    start_scan_requested = pyqtSignal()
-    stop_scan_requested = pyqtSignal()
+    scan_toggle_requested = pyqtSignal()
     save_project_requested = pyqtSignal()
     open_project_requested = pyqtSignal()
     reset_requested = pyqtSignal()
@@ -45,6 +45,8 @@ class SidebarWidget(QScrollArea):
         self.setFixedWidth(320)
         self.setWidgetResizable(True)
         self._build_ui()
+
+    # ───────────────────────────── UI build ─────────────────────────────
 
     def _build_ui(self):
         root = QWidget()
@@ -70,9 +72,7 @@ class SidebarWidget(QScrollArea):
         self.cam_conn.disconnect_requested.connect(self.disconnect_camera_requested)
 
         self.spec_conn.connect_requested.connect(self.connect_spectrometer_requested)
-        self.spec_conn.disconnect_requested.connect(
-            self.disconnect_spectrometer_requested
-        )
+        self.spec_conn.disconnect_requested.connect(self.disconnect_spectrometer_requested)
 
         self.motor_conn.connect_requested.connect(self.connect_motors_requested)
         self.motor_conn.disconnect_requested.connect(self.disconnect_motors_requested)
@@ -134,22 +134,18 @@ class SidebarWidget(QScrollArea):
         self.eta_lbl = QLabel("--:--:--")
         self.eta_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self.scan_btn = QPushButton("Start scan")
+        self.scan_btn.clicked.connect(self.scan_toggle_requested.emit)
+
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.setVisible(False)
-
-        self.start_btn = QPushButton("START SCAN")
-        self.stop_btn = QPushButton("STOP")
-        self.stop_btn.setEnabled(False)
+        self.reset_btn.clicked.connect(self.reset_requested.emit)
 
         self.save_btn = QPushButton("Save Project")
         self.save_btn.setEnabled(False)
+        self.save_btn.clicked.connect(self.save_project_requested.emit)
 
         self.open_btn = QPushButton("Open Project")
-
-        self.reset_btn.clicked.connect(self.reset_requested.emit)
-        self.start_btn.clicked.connect(self.start_scan_requested.emit)
-        self.stop_btn.clicked.connect(self.stop_scan_requested.emit)
-        self.save_btn.clicked.connect(self.save_project_requested.emit)
         self.open_btn.clicked.connect(self.open_project_requested.emit)
 
         for widget in (
@@ -158,16 +154,17 @@ class SidebarWidget(QScrollArea):
             self.raman_min,
             self.raman_max,
             self.status_lbl,
-            self.reset_btn,
             self.eta_lbl,
-            self.start_btn,
-            self.stop_btn,
+            self.scan_btn,
+            self.reset_btn,
             self.save_btn,
             self.open_btn,
         ):
             layout.addWidget(widget)
 
         return group
+
+    # ───────────────────────────── helpers ─────────────────────────────
 
     def _spin(self, label, default, step, min_val=None, max_val=None):
         box = QDoubleSpinBox()
@@ -180,17 +177,17 @@ class SidebarWidget(QScrollArea):
         box.setValue(default)
         return box
 
-    def set_scan_running(self, running: bool):
-        self.start_btn.setEnabled(not running)
-        self.stop_btn.setEnabled(running)
-        self.status_lbl.setText("Scanning…" if running else "Idle")
+    # ───────────────────────────── public API ─────────────────────────────
+
+    def set_scan_active(self, active: bool):
+        self.scan_btn.setText("Stop scan" if active else "Start scan")
+        self.status_lbl.setText("Scanning…" if active else "Idle")
 
     def set_save_enabled(self, enabled: bool):
         self.save_btn.setEnabled(enabled)
 
     def set_viewer_mode(self, enabled: bool):
-        self.start_btn.setEnabled(not enabled)
-        self.stop_btn.setEnabled(False)
+        self.scan_btn.setEnabled(not enabled)
         self.capture_btn.setEnabled(not enabled)
 
         self.step_x.setEnabled(not enabled)
@@ -206,7 +203,6 @@ class SidebarWidget(QScrollArea):
             self.status_lbl.setText("Viewer Mode")
             self.status_lbl.setStyleSheet("color:#1565C0;font-weight:bold;")
         else:
-            self.status_lbl.setText("Idle")
             self.status_lbl.setStyleSheet("")
 
     def get_scan_parameters(self):

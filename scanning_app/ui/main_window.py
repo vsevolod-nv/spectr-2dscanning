@@ -43,6 +43,9 @@ class MainWindow(QMainWindow):
         self.controller = AppController()
         self._heatmap_initialized = False
         self._scan_finalized = False
+        self._scan_running = False
+        self._spectra_live_mode = True
+        self._locked_point = None
         self._collected_scan_points = []
 
         self._init_ui()
@@ -110,7 +113,9 @@ class MainWindow(QMainWindow):
             self._on_raman_range_from_spectrum
         )
         self.heatmap_widget.scan_point_selected.connect(self._on_heatmap_point_selected)
-    
+
+        self.spectra_widget.live_requested.connect(self._on_live_requested)
+
     def _on_reset(self):
         self.controller.stop_scan()
         self.sidebar.set_scan_running(False)
@@ -119,6 +124,10 @@ class MainWindow(QMainWindow):
         self._on_disconnect_motors()
         self.camera_widget.clear_roi()
         self.camera_widget.set_image(None)
+        self._scan_running = False
+        self._spectra_live_mode = False
+        self.spectra_widget.live_btn.setVisible(False)
+
         self._heatmap_initialized = False
         self._scan_finalized = False
         self._collected_scan_points = []
@@ -183,6 +192,12 @@ class MainWindow(QMainWindow):
         self._update_camera_images()
 
     def _on_start_scan(self):
+        
+        self._scan_running = True
+        self._spectra_live_mode = True
+        self._locked_point = None
+        self.spectra_widget.live_btn.setVisible(False)
+
         self.sidebar.set_viewer_mode(False)
 
         if not all(
@@ -225,7 +240,9 @@ class MainWindow(QMainWindow):
     def _on_scan_point(self, point):
         self._collected_scan_points.append(point)
 
-        self.spectra_widget.update_from_scan_point(point)
+        if self._spectra_live_mode:
+            self.spectra_widget.update_from_scan_point(point)
+            self.heatmap_widget.highlight_point(point)
 
         rmin = self.sidebar.raman_min.value()
         rmax = self.sidebar.raman_max.value()
@@ -245,8 +262,12 @@ class MainWindow(QMainWindow):
                 self._collected_scan_points,
                 self.sidebar.get_scan_parameters(),
             )
+            self._scan_running = False
             self._scan_finalized = True
             self.sidebar.set_save_enabled(True)
+
+        self._spectra_live_mode = False
+        self.spectra_widget.live_btn.setVisible(False)
 
     def _on_scan_finished(self):
         self.sidebar.set_scan_running(False)
@@ -259,8 +280,12 @@ class MainWindow(QMainWindow):
                 self._collected_scan_points,
                 self.sidebar.get_scan_parameters(),
             )
+            self._scan_running = False
             self._scan_finalized = True
             self.sidebar.set_save_enabled(True)
+
+        self._spectra_live_mode = False
+        self.spectra_widget.live_btn.setVisible(False)
 
     def _on_raman_range_from_spectrum(self, rmin, rmax):
         self.sidebar.set_raman_range(rmin, rmax)
@@ -274,7 +299,17 @@ class MainWindow(QMainWindow):
         self.heatmap_widget.set_raman_range(rmin, rmax)
 
     def _on_heatmap_point_selected(self, point):
+        self._spectra_live_mode = False
+        self._locked_point = point
+
         self.spectra_widget.update_from_scan_point(point)
+        self.heatmap_widget.highlight_point(point)
+
+        if self._scan_running:
+            self.spectra_widget.live_btn.setVisible(True)
+        else:
+            self.spectra_widget.live_btn.setVisible(False)
+
         self.spectra_widget.set_raman_range(
             self.sidebar.raman_min.value(),
             self.sidebar.raman_max.value(),
@@ -333,6 +368,7 @@ class MainWindow(QMainWindow):
         self.controller.save_current_scan(Path(path))
 
     def _load_scan_into_ui(self, scan):
+        self.spectra_widget.live_btn.setVisible(False)
         if scan.camera_overview_png:
             image = QImage.fromData(scan.camera_overview_png, "PNG")
 
@@ -395,6 +431,10 @@ class MainWindow(QMainWindow):
         self.sidebar.set_viewer_mode(True)
 
     def _on_open_project(self):
+        self._scan_running = False
+        self._spectra_live_mode = False
+        self.spectra_widget.live_btn.setVisible(False)
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Raman 2D Scan",
@@ -415,3 +455,13 @@ class MainWindow(QMainWindow):
             raw=self.camera_widget.export_raw_png(),
             overview=self.camera_widget.export_overview_png(),
         )
+
+    def _on_live_requested(self):
+        self._spectra_live_mode = True
+        self._locked_point = None
+        self.spectra_widget.live_btn.setVisible(False)
+
+        if self._collected_scan_points:
+            last = self._collected_scan_points[-1]
+            self.spectra_widget.update_from_scan_point(last)
+            self.heatmap_widget.highlight_point(last)

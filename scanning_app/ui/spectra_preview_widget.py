@@ -1,5 +1,5 @@
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QVBoxLayout, QWidget, QPushButton
 from loguru import logger
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -10,6 +10,7 @@ from config import PLOT_DPI, RAMAN_MAX_LIMIT, RAMAN_MIN_LIMIT
 
 class SpectraPreviewWidget(QWidget):
     raman_range_selected = pyqtSignal(float, float)
+    live_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -21,6 +22,10 @@ class SpectraPreviewWidget(QWidget):
         self._suppress_span_signal = False
         self._raman_min = RAMAN_MIN_LIMIT
         self._raman_max = RAMAN_MAX_LIMIT
+
+        self.live_btn = QPushButton("Live")
+        self.live_btn.setVisible(False)
+        self.live_btn.clicked.connect(self._on_live_clicked)
 
         self._init_ui()
         self._init_axes()
@@ -42,6 +47,7 @@ class SpectraPreviewWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
+        layout.addWidget(self.live_btn)
         layout.addWidget(self.canvas)
 
     def _init_axes(self):
@@ -163,4 +169,8 @@ class SpectraPreviewWidget(QWidget):
         self._show_empty_message()
         if hasattr(self, "_last_spectrum"):
             delattr(self, "_last_spectrum")
+        self.live_btn.setVisible(False)
         self.canvas.draw_idle()
+
+    def _on_live_clicked(self):
+        self.live_requested.emit()

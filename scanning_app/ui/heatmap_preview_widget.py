@@ -2,6 +2,7 @@ import io
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.patches import Rectangle
 from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
@@ -37,6 +38,9 @@ class HeatmapPreviewWidget(QWidget):
         self._colorbar = None
         self._has_2d_heatmap = False
 
+        self._selection_rect = None
+        self._selected_point = None
+
         self._init_ui()
         self._show_qt_message("No Scan Data")
 
@@ -69,6 +73,8 @@ class HeatmapPreviewWidget(QWidget):
         self._colorbar = None
         self._has_2d_heatmap = False
 
+        if self._selection_rect:
+            self._selection_rect.set_visible(False)
 
         if not points:
             self._show_qt_message("No Scan Data")
@@ -92,6 +98,22 @@ class HeatmapPreviewWidget(QWidget):
             extent=self._compute_extent(),
         )
 
+        dx = self._xs[1] - self._xs[0]
+        dy = self._ys[1] - self._ys[0]
+
+        self._selection_rect = Rectangle(
+            (0, 0),
+            dx,
+            dy,
+            linewidth=2,
+            edgecolor="red",
+            facecolor="none",
+            zorder=5,
+            visible=False,
+        )
+
+        self.ax.add_patch(self._selection_rect)
+
         cmap = self._im.get_cmap().copy()
         cmap.set_bad(alpha=0.0)
         self._im.set_cmap(cmap)
@@ -105,6 +127,29 @@ class HeatmapPreviewWidget(QWidget):
         self.canvas.draw()
 
         self._has_2d_heatmap = True
+
+    def highlight_point(self, point):
+        if not self._has_2d_heatmap or point is None:
+            return
+
+        xs = np.asarray(self._xs)
+        ys = np.asarray(self._ys)
+
+        x_idx = int(np.argmin(np.abs(xs - point.x)))
+        y_idx = int(np.argmin(np.abs(ys - point.y)))
+
+        dx = xs[1] - xs[0]
+        dy = ys[1] - ys[0]
+
+        x0 = xs[x_idx] - dx / 2
+        y0 = ys[y_idx] - dy / 2
+
+        self._selection_rect.set_xy((x0, y0))
+        self._selection_rect.set_width(dx)
+        self._selection_rect.set_height(dy)
+        self._selection_rect.set_visible(True)
+
+        self.canvas.draw_idle()
 
     def populate_from_points(self, points, raman_min, raman_max):
         self._source_points = list(points)
@@ -160,6 +205,7 @@ class HeatmapPreviewWidget(QWidget):
 
         point = self._grid_points[y_idx][x_idx]
         if point:
+            self.highlight_point(point)
             self.scan_point_selected.emit(point)
 
     def _on_mouse_move(self, event):

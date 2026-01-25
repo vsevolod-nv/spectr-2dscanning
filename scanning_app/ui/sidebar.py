@@ -8,6 +8,10 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
+    QComboBox,
+    QCheckBox,
+    QToolButton,
+    QSizePolicy,
 )
 
 from config import (
@@ -42,25 +46,40 @@ class SidebarWidget(QScrollArea):
 
     def __init__(self):
         super().__init__()
+
         self.setFixedWidth(320)
         self.setWidgetResizable(True)
-        self._build_ui()
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-    # ───────────────────────────── UI build ─────────────────────────────
+        self._build_ui()
 
     def _build_ui(self):
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setSpacing(10)
 
-        layout.addWidget(self._build_connections())
-        layout.addWidget(self._build_camera_controls())
+        layout.addWidget(self._build_devices())
+        layout.addWidget(self._build_camera())
+        layout.addWidget(self._build_spectrometer())
+        layout.addWidget(self._build_motors())
         layout.addWidget(self._build_scan_controls())
         layout.addStretch()
 
         self.setWidget(root)
 
-    def _build_connections(self):
+    def _collapsible_toggle(self, title: str):
+        btn = QToolButton()
+        btn.setText(title)
+        btn.setCheckable(True)
+        btn.setChecked(False)
+        btn.setArrowType(Qt.ArrowType.RightArrow)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        btn.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        return btn
+
+    def _build_devices(self):
         group = QGroupBox("Devices")
         layout = QVBoxLayout(group)
 
@@ -83,9 +102,20 @@ class SidebarWidget(QScrollArea):
 
         return group
 
-    def _build_camera_controls(self):
+    def _build_camera(self):
         group = QGroupBox("Camera")
         layout = QVBoxLayout(group)
+
+        self.capture_btn = QPushButton("Capture Image")
+        self.capture_btn.clicked.connect(self.capture_image_requested.emit)
+        layout.addWidget(self.capture_btn)
+
+        self.cam_toggle = self._collapsible_toggle("Shot Settings")
+        layout.addWidget(self.cam_toggle)
+
+        self.cam_content = QWidget()
+        self.cam_content.setVisible(False)
+        cam_layout = QVBoxLayout(self.cam_content)
 
         self.expo_spin = QSpinBox()
         self.expo_spin.setRange(EXPOSURE_MIN, EXPOSURE_MAX)
@@ -95,16 +125,107 @@ class SidebarWidget(QScrollArea):
         self.gain_spin.setRange(GAIN_MIN, GAIN_MAX)
         self.gain_spin.setValue(GAIN_DEFAULT)
 
-        self.capture_btn = QPushButton("Capture Image")
-        self.capture_btn.clicked.connect(self.capture_image_requested.emit)
+        cam_layout.addWidget(QLabel("Exposure (µs)"))
+        cam_layout.addWidget(self.expo_spin)
+        cam_layout.addWidget(QLabel("Gain"))
+        cam_layout.addWidget(self.gain_spin)
 
-        layout.addWidget(QLabel("Exposure (µs)"))
-        layout.addWidget(self.expo_spin)
-        layout.addWidget(QLabel("Gain"))
-        layout.addWidget(self.gain_spin)
-        layout.addWidget(self.capture_btn)
+        self.auto_expo_chk = QCheckBox("Auto Exposure")
+        self.auto_wb_chk = QCheckBox("Auto White Balance")
+
+        cam_layout.addWidget(self.auto_expo_chk)
+        cam_layout.addWidget(self.auto_wb_chk)
+
+        self.gamma_spin = QSpinBox()
+        self.gamma_spin.setRange(1, 300)
+        self.gamma_spin.setValue(100)
+
+        self.contrast_spin = QSpinBox()
+        self.contrast_spin.setRange(-100, 100)
+        self.contrast_spin.setValue(0)
+
+        cam_layout.addWidget(QLabel("Gamma"))
+        cam_layout.addWidget(self.gamma_spin)
+        cam_layout.addWidget(QLabel("Contrast"))
+        cam_layout.addWidget(self.contrast_spin)
+
+        self.binning_combo = QComboBox()
+        self.binning_combo.addItems(["1x", "2x", "4x"])
+
+        cam_layout.addWidget(QLabel("Binning"))
+        cam_layout.addWidget(self.binning_combo)
+
+        layout.addWidget(self.cam_content)
+
+        self.cam_toggle.toggled.connect(
+            lambda v: self._toggle(self.cam_toggle, self.cam_content, v)
+        )
 
         return group
+
+    def _build_spectrometer(self):
+        group = QGroupBox("Spectrometer")
+        layout = QVBoxLayout(group)
+
+        self.spec_toggle = self._collapsible_toggle("Spectrometer Settings")
+        layout.addWidget(self.spec_toggle)
+
+        self.spec_content = QWidget()
+        self.spec_content.setVisible(False)
+        spec_layout = QVBoxLayout(self.spec_content)
+
+        self.spec_integration = QSpinBox()
+        self.spec_integration.setRange(1, 10_000)
+        self.spec_integration.setValue(500)
+
+        self.spec_averages = QSpinBox()
+        self.spec_averages.setRange(1, 100)
+        self.spec_averages.setValue(1)
+
+        spec_layout.addWidget(QLabel("Integration Time (ms)"))
+        spec_layout.addWidget(self.spec_integration)
+        spec_layout.addWidget(QLabel("Averages"))
+        spec_layout.addWidget(self.spec_averages)
+
+        layout.addWidget(self.spec_content)
+
+        self.spec_toggle.toggled.connect(
+            lambda v: self._toggle(self.spec_toggle, self.spec_content, v)
+        )
+
+        return group
+
+    def _build_motors(self):
+        group = QGroupBox("Motors")
+        layout = QVBoxLayout(group)
+
+        self.motor_toggle = self._collapsible_toggle("Motor Settings")
+        layout.addWidget(self.motor_toggle)
+
+        self.motor_content = QWidget()
+        self.motor_content.setVisible(False)
+        motor_layout = QVBoxLayout(self.motor_content)
+
+        self.motor_speed = QDoubleSpinBox()
+        self.motor_speed.setRange(0.1, 100.0)
+        self.motor_speed.setValue(1.0)
+
+        motor_layout.addWidget(QLabel("Move Speed"))
+        motor_layout.addWidget(self.motor_speed)
+
+        layout.addWidget(self.motor_content)
+
+        self.motor_toggle.toggled.connect(
+            lambda v: self._toggle(self.motor_toggle, self.motor_content, v)
+        )
+
+        return group
+
+    def _toggle(self, btn: QToolButton, content: QWidget, checked: bool):
+        content.setVisible(checked)
+        btn.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
 
     def _build_scan_controls(self):
         group = QGroupBox("Scan / Viewer")
@@ -148,7 +269,7 @@ class SidebarWidget(QScrollArea):
         self.open_btn = QPushButton("Open Project")
         self.open_btn.clicked.connect(self.open_project_requested.emit)
 
-        for widget in (
+        for w in (
             self.step_x,
             self.step_y,
             self.raman_min,
@@ -160,63 +281,38 @@ class SidebarWidget(QScrollArea):
             self.save_btn,
             self.open_btn,
         ):
-            layout.addWidget(widget)
+            layout.addWidget(w)
 
         return group
-
-    # ───────────────────────────── helpers ─────────────────────────────
 
     def _spin(self, label, default, step, min_val=None, max_val=None):
         box = QDoubleSpinBox()
         box.setPrefix(f"{label}: ")
         box.setSingleStep(step)
-
         if min_val is not None and max_val is not None:
             box.setRange(min_val, max_val)
-
         box.setValue(default)
         return box
 
-    # ───────────────────────────── public API ─────────────────────────────
+    def get_scan_parameters(self) -> dict:
+        return {
+            "step_size_x": float(self.step_x.value()),
+            "step_size_y": float(self.step_y.value()),
+            "raman_min": float(self.raman_min.value()),
+            "raman_max": float(self.raman_max.value()),
+        }
 
     def set_scan_active(self, active: bool):
-        self.scan_btn.setText("Stop scan" if active else "Start scan")
-        self.status_lbl.setText("Scanning…" if active else "Idle")
+        if active:
+            self.scan_btn.setText("Stop scan")
+            self.status_lbl.setText("Scanning…")
+            self.save_btn.setEnabled(False)
+            self.reset_btn.setVisible(False)
+        else:
+            self.scan_btn.setText("Start scan")
+            if self.status_lbl.text() == "Scanning…":
+                self.status_lbl.setText("Idle")
 
     def set_save_enabled(self, enabled: bool):
         self.save_btn.setEnabled(enabled)
 
-    def set_viewer_mode(self, enabled: bool):
-        self.scan_btn.setEnabled(not enabled)
-        self.capture_btn.setEnabled(not enabled)
-
-        self.step_x.setEnabled(not enabled)
-        self.step_y.setEnabled(not enabled)
-
-        self.cam_conn.setEnabled(not enabled)
-        self.spec_conn.setEnabled(not enabled)
-        self.motor_conn.setEnabled(not enabled)
-
-        self.reset_btn.setVisible(enabled)
-
-        if enabled:
-            self.status_lbl.setText("Viewer Mode")
-            self.status_lbl.setStyleSheet("color:#1565C0;font-weight:bold;")
-        else:
-            self.status_lbl.setStyleSheet("")
-
-    def get_scan_parameters(self):
-        return {
-            "step_size_x": self.step_x.value(),
-            "step_size_y": self.step_y.value(),
-            "raman_min": self.raman_min.value(),
-            "raman_max": self.raman_max.value(),
-        }
-
-    def set_raman_range(self, rmin, rmax):
-        self.raman_min.blockSignals(True)
-        self.raman_max.blockSignals(True)
-        self.raman_min.setValue(rmin)
-        self.raman_max.setValue(rmax)
-        self.raman_min.blockSignals(False)
-        self.raman_max.blockSignals(False)

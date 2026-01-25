@@ -1,103 +1,78 @@
 import ctypes
-import time
 import numpy as np
-
 from PyQt6.QtGui import QImage
 from loguru import logger
 
-import toupcam
-
-from config import (
-    TOUPCAM_AUTO_EXPO_ENABLED,
-    TOUPCAM_DEFAULT_EXPO_TIME_US,
-    TOUPCAM_DEFAULT_EXPO_AGAIN,
-    TOUPCAM_SNAP_WAIT_SECONDS,
-    TOUPCAM_PIXEL_FORMAT_BITS,
-)
-
+import devices.camera.toupcam as toupcam
 from .base_camera import BaseCamera
 
+def _dummy_event_cb(n_event, ctx):
+    pass
 
 class ToupcamCamera(BaseCamera):
-    def __init__(self):
+    def __init__(self, model):
+        self._model = model
         self._hcam = None
         self._connected = False
 
-        self._width = None
-        self._height = None
+        self._width = 0
+        self._height = 0
 
-        self._exposure = TOUPCAM_DEFAULT_EXPO_TIME_US
-        self._gain = TOUPCAM_DEFAULT_EXPO_AGAIN
+        self._last_frame: QImage | None = None
+
+        self._exposure_us = 10_000
+        self._gain = 100
 
     def connect(self) -> None:
-        logger.info("Opening Toupcam camera")
+        logger.info(f"Opening Toupcam: {self._model.displayname}")
 
-        self._hcam = toupcam.Toupcam.Open(None)
+        self._hcam = toupcam.Toupcam.Open(self._model.id)
         if not self._hcam:
-            raise RuntimeError("Failed to open Toupcam camera")
+            raise RuntimeError("Failed to open Toupcam")
 
         self._width, self._height = self._hcam.get_Size()
 
-        self._hcam.put_AutoExpoEnable(
-            1 if TOUPCAM_AUTO_EXPO_ENABLED else 0
-        )
-        self._hcam.put_ExpoTime(self._exposure)
+        self._hcam.put_AutoExpoEnable(0)
+        self._hcam.put_ExpoTime(self._exposure_us)
         self._hcam.put_ExpoAGain(self._gain)
 
-        self._hcam.StartPullModeWithCallback(None, None)
+        self._hcam.StartPullModeWithCallback(_dummy_event_cb, None)
 
         self._connected = True
         logger.info(
-            "Toupcam connected (%dx%d)", self._width, self._height
+            "Toupcam connected (%dx%d)",
+            self._width,
+            self._height,
         )
 
     def disconnect(self) -> None:
         if self._hcam:
-            logger.info("Closing Toupcam camera")
             self._hcam.Close()
 
         self._hcam = None
         self._connected = False
+        self._last_frame = None
+
+        logger.info("Toupcam disconnected")
 
     def is_connected(self) -> bool:
         return self._connected
 
-    def set_exposure(self, value: int) -> None:
-        self._exposure = int(value)
-        if self._hcam:
-            self._hcam.put_ExpoTime(self._exposure)
-        logger.debug("Toupcam exposure set to %d µs", value)
-
-    def set_gain(self, value: int) -> None:
-        self._gain = int(value)
-        if self._hcam:
-            self._hcam.put_ExpoAGain(self._gain)
-        logger.debug("Toupcam gain set to %d", value)
-
     def capture(self) -> QImage:
         if not self._connected or not self._hcam:
-            raise RuntimeError("Toupcam not connected")
-
-        logger.debug("Toupcam snap requested")
-
-        self._hcam.Snap(0)
-        time.sleep(TOUPCAM_SNAP_WAIT_SECONDS)
+            raise RuntimeError("Camera not connected")
 
         buf = ctypes.create_string_buffer(
             self._width * self._height * 3
         )
 
-        self._hcam.PullStillImageV2(
-            buf,
-            TOUPCAM_PIXEL_FORMAT_BITS,
-            None,
+        self._hcam.PullImageV2(buf, 24, None)
+
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape(
+            (self._height, self._width, 3)
         )
 
-        arr = np.frombuffer(
-            buf, dtype=np.uint8
-        ).reshape((self._height, self._width, 3))
-
-        qimage = QImage(
+        qimg = QImage(
             arr.data,
             self._width,
             self._height,
@@ -105,6 +80,14 @@ class ToupcamCamera(BaseCamera):
             QImage.Format.Format_RGB888,
         ).convertToFormat(QImage.Format.Format_RGB32)
 
-        logger.debug("Toupcam image captured")
+        return qimg.copy()
 
-        return qimage.copy()
+    def set_exposure(self, value: int) -> None:
+        self._exposure_us = int(value)
+        if self._hcam:
+            self._hcam.put_ExpoTime(self._exposure_us)
+
+    def set_gain(self, value: int) -> None:
+        self._gain = int(value)
+        if self._hcam:
+            self._hcam.put_ExpoAGain(self._gain)

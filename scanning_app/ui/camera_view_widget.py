@@ -186,6 +186,8 @@ class CameraViewWidget(QtWidgets.QWidget):
             self.add_roi(QRectF(x, y, w, h))
 
     def set_image(self, qimage: QtGui.QImage):
+
+        self.image_item.clear()
         if qimage is None or qimage.isNull():
             self._show_no_image()
             return

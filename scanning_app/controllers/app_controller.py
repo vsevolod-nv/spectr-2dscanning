@@ -15,22 +15,20 @@ class AppController:
         self.device_factory = DeviceFactory()
 
         self.camera = None
+
         self.spectrometer = None
         self.motors = None
 
         self.scan_worker = None
         self.current_scan = None
 
-        self.heatmap_png_bytes = None
-        self.camera_png_bytes = None
-
         self.scan_dirty = False
 
         self.camera_raw_png = None
         self.camera_overview_png = None
 
-        self._current_roi = None
-        self._current_scan_params = None
+        self.heatmap_png_bytes = None
+
 
     def set_heatmap_png(self, png_bytes: bytes) -> None:
         self.heatmap_png_bytes = png_bytes
@@ -51,6 +49,11 @@ class AppController:
         self.camera = self.device_factory.create_camera(name)
         self.camera.connect()
 
+    def disconnect_camera(self):
+        if self.camera:
+            self.camera.disconnect()
+        self.camera = None
+
     def connect_spectrometer(self, name):
         self.spectrometer = self.device_factory.create_spectrometer(name)
         self.spectrometer.connect()
@@ -59,10 +62,10 @@ class AppController:
         self.motors = self.device_factory.create_motors(name)
         self.motors.connect()
 
-    def disconnect_camera(self):
-        if self.camera:
-            self.camera.disconnect()
-        self.camera = None
+    def capture_camera_image(self):
+        if not self.camera:
+            raise RuntimeError("Camera not ready")
+        return self.camera.capture()
 
     def disconnect_spectrometer(self):
         if self.spectrometer:

@@ -135,6 +135,7 @@ class SidebarWidget(QScrollArea):
         self.eta_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setVisible(False)
 
         self.start_btn = QPushButton("START SCAN")
         self.stop_btn = QPushButton("STOP")
@@ -198,6 +199,8 @@ class SidebarWidget(QScrollArea):
         self.cam_conn.setEnabled(not enabled)
         self.spec_conn.setEnabled(not enabled)
         self.motor_conn.setEnabled(not enabled)
+
+        self.reset_btn.setVisible(enabled)
 
         if enabled:
             self.status_lbl.setText("Viewer Mode")

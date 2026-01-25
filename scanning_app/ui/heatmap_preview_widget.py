@@ -60,12 +60,15 @@ class HeatmapPreviewWidget(QWidget):
         self.canvas.show()
 
     def initialize_grid(self, points):
+        self.fig.clear()
+        self.ax = self.fig.add_subplot(111)
+
         self._grid_points = None
         self._z = None
         self._im = None
-        self._remove_colorbar()
-        self.ax.clear()
+        self._colorbar = None
         self._has_2d_heatmap = False
+
 
         if not points:
             self._show_qt_message("No Scan Data")

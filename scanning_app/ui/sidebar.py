@@ -301,6 +301,17 @@ class SidebarWidget(QScrollArea):
             "raman_min": float(self.raman_min.value()),
             "raman_max": float(self.raman_max.value()),
         }
+    
+    def get_camera_settings(self) -> dict:
+        return {
+            "exposure_us": int(self.expo_spin.value()),
+            "gain": int(self.gain_spin.value()),
+            "auto_exposure": self.auto_expo_chk.isChecked(),
+            "auto_white_balance": self.auto_wb_chk.isChecked(),
+            "gamma": int(self.gamma_spin.value()),
+            "contrast": int(self.contrast_spin.value()),
+            "binning": self.binning_combo.currentText(),
+        }
 
     def set_scan_active(self, active: bool):
         if active:

@@ -138,6 +138,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Camera", "Camera not connected")
             return
 
+        cam = self.controller.camera
+        settings = self.sidebar.get_camera_settings()
+
+        cam.set_auto_exposure(settings["auto_exposure"])
+        cam.set_auto_white_balance(settings["auto_white_balance"])
+
+        if not settings["auto_exposure"]:
+            cam.set_exposure(settings["exposure_us"])
+            cam.set_gain(settings["gain"])
+
+        cam.set_gamma(settings["gamma"])
+        cam.set_contrast(settings["contrast"])
+
         self.camera_widget.set_image(
             self.controller.capture_camera_image()
         )

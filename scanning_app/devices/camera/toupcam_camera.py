@@ -32,7 +32,13 @@ class ToupcamCamera(BaseCamera):
 
         self._width, self._height = self._hcam.get_Size()
 
-        self._hcam.put_AutoExpoEnable(0)
+        # ✅ Enable auto exposure like ToupView
+        self._hcam.put_AutoExpoEnable(1)
+
+        # These are ignored while auto-expo is ON, but good defaults
+        self._exposure_us = 327_000
+        self._gain = 100
+
         self._hcam.put_ExpoTime(self._exposure_us)
         self._hcam.put_ExpoAGain(self._gain)
 
@@ -44,6 +50,7 @@ class ToupcamCamera(BaseCamera):
             self._width,
             self._height,
         )
+
 
     def disconnect(self) -> None:
         if self._hcam:
@@ -91,3 +98,32 @@ class ToupcamCamera(BaseCamera):
         self._gain = int(value)
         if self._hcam:
             self._hcam.put_ExpoAGain(self._gain)
+
+    def set_auto_exposure(self, enabled: bool) -> None:
+        if self._hcam:
+            self._hcam.put_AutoExpoEnable(1 if enabled else 0)
+
+    def set_auto_white_balance(self, enabled: bool) -> None:
+        if not self._hcam:
+            return
+
+        if enabled:
+            # Auto white balance, continuous every 200 ms
+            self._hcam.put_Option(
+                toupcam.TOUPCAM_OPTION_AWB_CONTINUOUS,
+                200
+            )
+        else:
+            # Disable auto white balance
+            self._hcam.put_Option(
+                toupcam.TOUPCAM_OPTION_AWB_CONTINUOUS,
+                0
+            )
+
+    def set_gamma(self, value: int) -> None:
+        if self._hcam:
+            self._hcam.put_Gamma(value)
+
+    def set_contrast(self, value: int) -> None:
+        if self._hcam:
+            self._hcam.put_Contrast(value)
